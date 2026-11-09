@@ -7,7 +7,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 // Coldy hangs from the cursor on a rope that can bend.
-// The control window sets the name, rope length, size, cursor, and hide key.
+// The control window sets the name, rope length, size, form, cursor, and hide key.
 // The pendant itself is a transparent, topmost, click-through layered window.
 class Program
 {
@@ -41,6 +41,13 @@ class PendantForm : Form
     readonly Bitmap sprite;
     readonly float anchorSpriteX;
     readonly float anchorSpriteY;
+    Bitmap[] form2;
+    float anchor2X;
+    float anchor2Y;
+    int formIndex;
+    int animFrame;
+    double animTime;
+    const int AnimFrameMs = 100;
     readonly Rope rope = new Rope(RopeSegments, 120f, Gravity);
     float scale;
     float anchorX;
@@ -69,6 +76,24 @@ class PendantForm : Form
         PointF anchor = FindAnchor(sprite);
         anchorSpriteX = anchor.X;
         anchorSpriteY = anchor.Y;
+        string gifPath = Path.Combine(dir, "assets", "coldy-form2.gif");
+        if (File.Exists(gifPath))
+        {
+            try
+            {
+                form2 = LoadGif(gifPath);
+                if (form2.Length > 0)
+                {
+                    PointF anchor2 = FindAnchor(form2[0]);
+                    anchor2X = anchor2.X;
+                    anchor2Y = anchor2.Y;
+                }
+            }
+            catch
+            {
+                form2 = null;
+            }
+        }
         ApplyMetrics();
 
         tray.Icon = Icon.FromHandle(sprite.GetHicon());
@@ -110,6 +135,10 @@ class PendantForm : Form
         tray.Visible = false;
         tray.Dispose();
         sprite.Dispose();
+        if (form2 != null)
+        {
+            for (int i = 0; i < form2.Length; i++) form2[i].Dispose();
+        }
         base.OnFormClosed(e);
     }
 
@@ -146,13 +175,62 @@ class PendantForm : Form
         hidden = value;
     }
 
+    public void SetForm(int index)
+    {
+        if (form2 == null || form2.Length == 0) index = 0;
+        if (index != 0) index = 1;
+        formIndex = index;
+        animFrame = 0;
+        animTime = 0;
+        ApplyMetrics();
+    }
+
     void ApplyMetrics()
     {
         if (displayHeight < 40f) displayHeight = 40f;
-        scale = displayHeight / sprite.Height;
-        anchorX = anchorSpriteX * scale;
-        anchorY = anchorSpriteY * scale;
+        Bitmap picture = CurrentPicture();
+        scale = displayHeight / picture.Height;
+        float ax = formIndex == 1 ? anchor2X : anchorSpriteX;
+        float ay = formIndex == 1 ? anchor2Y : anchorSpriteY;
+        anchorX = ax * scale;
+        anchorY = ay * scale;
         rope.SetLength(ropeLength);
+    }
+
+    Bitmap CurrentPicture()
+    {
+        if (formIndex == 1 && form2 != null && form2.Length > 0)
+            return form2[animFrame];
+        return sprite;
+    }
+
+    static Bitmap[] LoadGif(string path)
+    {
+        using (Image img = Image.FromFile(path))
+        {
+            var dim = new FrameDimension(img.FrameDimensionsList[0]);
+            int count = img.GetFrameCount(dim);
+            var frames = new Bitmap[count];
+            using (var attr = new ImageAttributes())
+            {
+                attr.SetColorKey(Color.Magenta, Color.Magenta);
+                for (int i = 0; i < count; i++)
+                {
+                    img.SelectActiveFrame(dim, i);
+                    var frame = new Bitmap(img.Width, img.Height, PixelFormat.Format32bppArgb);
+                    using (var g = Graphics.FromImage(frame))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.DrawImage(img,
+                            new Rectangle(0, 0, img.Width, img.Height),
+                            0, 0, img.Width, img.Height,
+                            GraphicsUnit.Pixel, attr);
+                    }
+                    frames[i] = frame;
+                }
+            }
+            return frames;
+        }
     }
 
     void Tick()
@@ -172,6 +250,17 @@ class PendantForm : Form
             hiddenApplied = false;
         }
 
+        if (formIndex == 1 && form2 != null && form2.Length > 1)
+        {
+            animTime += timer.Interval;
+            while (animTime >= AnimFrameMs)
+            {
+                animTime -= AnimFrameMs;
+                animFrame++;
+                if (animFrame >= form2.Length) animFrame = 0;
+            }
+        }
+
         Point cursor = CursorPosition();
         float hang = cursorSize * 0.45f;
         rope.SetAnchor(cursor.X + hang * 0.25f, cursor.Y + hang, !placed);
@@ -181,8 +270,9 @@ class PendantForm : Form
         float angle = rope.Angle();
         float px = (float)rope.X[rope.Points - 1];
         float py = (float)rope.Y[rope.Points - 1];
-        float dw = sprite.Width * scale;
-        float dh = sprite.Height * scale;
+        Bitmap picture = CurrentPicture();
+        float dw = picture.Width * scale;
+        float dh = picture.Height * scale;
 
         float minX = px, minY = py, maxX = px, maxY = py;
         float ax = anchorX, ay = anchorY;
@@ -239,7 +329,7 @@ class PendantForm : Form
             g.TranslateTransform(px - winX, py - winY);
             g.RotateTransform(angle * (180f / (float)Math.PI));
             g.TranslateTransform(-anchorX, -anchorY);
-            g.DrawImage(sprite, 0, 0, dw, dh);
+            g.DrawImage(picture, 0, 0, dw, dh);
             g.Restore(state);
 
             Premultiply(bmp);
@@ -682,6 +772,7 @@ class SettingsForm : Form
     readonly TrackBar ropeBar = new TrackBar();
     readonly TrackBar sizeBar = new TrackBar();
     readonly TrackBar cursorSizeBar = new TrackBar();
+    readonly ComboBox formBox = new ComboBox();
     readonly ComboBox cursorBox = new ComboBox();
     readonly Button hotkeyButton = new Button();
     readonly Label ropeValue = new Label();
@@ -705,7 +796,7 @@ class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(520, 420);
+        ClientSize = new Size(520, 470);
         Font = new Font("Microsoft YaHei UI", 10.5f);
         KeyPreview = true;
         string dir = Path.GetDirectoryName(Application.ExecutablePath);
@@ -724,27 +815,32 @@ class SettingsForm : Form
         sizeValue.SetBounds(390, 136, 60, 24);
         Controls.Add(sizeValue);
 
+        formBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        formBox.Items.AddRange(new object[] { "形态 1", "形态 2" });
+        formBox.SelectedIndex = 0;
+        AddRow(186, "形态", formBox, 180);
+
         cursorBox.DropDownStyle = ComboBoxStyle.DropDownList;
         cursorBox.Items.AddRange(new object[] { "跟随场景", "系统默认" });
         cursorBox.SelectedIndex = 0;
-        AddRow(186, "光标", cursorBox, 180);
+        AddRow(236, "光标", cursorBox, 180);
 
-        AddRow(236, "光标大小", cursorSizeBar, 250);
-        cursorSizeValue.SetBounds(390, 240, 60, 24);
+        AddRow(286, "光标大小", cursorSizeBar, 250);
+        cursorSizeValue.SetBounds(390, 290, 60, 24);
         Controls.Add(cursorSizeValue);
 
         hotkeyButton.Text = "F8";
-        AddRow(290, "隐藏快捷键", hotkeyButton, 200);
+        AddRow(340, "隐藏快捷键", hotkeyButton, 200);
         hideButton.Text = "隐藏人物";
-        hideButton.SetBounds(350, 286, 110, 30);
+        hideButton.SetBounds(350, 336, 110, 30);
         Controls.Add(hideButton);
 
         var exitButton = new Button();
         exitButton.Text = "退出";
-        exitButton.SetBounds(24, 360, 100, 34);
+        exitButton.SetBounds(24, 410, 100, 34);
         Controls.Add(exitButton);
 
-        status.SetBounds(140, 364, 320, 28);
+        status.SetBounds(140, 414, 360, 28);
         status.ForeColor = Color.DimGray;
         Controls.Add(status);
 
@@ -758,6 +854,14 @@ class SettingsForm : Form
         ropeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
         sizeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
         cursorSizeBar.ValueChanged += delegate { if (!loading) ApplyAll(true); };
+        formBox.SelectedIndexChanged += delegate
+        {
+            if (loading) return;
+            ApplyAll(false);
+            status.Text = formBox.SelectedIndex == 1
+                ? "形态 2：蹲跳、眨眼，勺子和彩虹线会晃"
+                : "形态 1：原来的静图";
+        };
         cursorBox.SelectedIndexChanged += delegate { if (!loading) ApplyAll(true); };
         hotkeyButton.Click += delegate { BeginHotkeyCapture(); };
         hideButton.Click += delegate { ToggleHidden(); };
@@ -824,6 +928,7 @@ class SettingsForm : Form
         pendant.SetName(name);
         pendant.SetRopeLength(ropeBar.Value);
         pendant.SetDisplayHeight(sizeBar.Value);
+        pendant.SetForm(formBox.SelectedIndex);
         pendant.SetCursorSize(cursorSizeBar.Value);
         if (cursor) ApplyCursor();
         SaveSettings();
@@ -1028,6 +1133,7 @@ class SettingsForm : Form
             else if (key == "size") SetBar(sizeBar, val);
             else if (key == "cursorSize") SetBar(cursorSizeBar, val);
             else if (key == "cursor") SelectCursor(val);
+            else if (key == "form") SelectForm(val);
             else if (key == "hotkeyVk")
             {
                 if (int.TryParse(val, out n) && n > 0) { fileVk = n; sawVk = true; }
@@ -1092,6 +1198,11 @@ class SettingsForm : Form
         cursorBox.SelectedIndex = val == "system" ? 1 : 0;
     }
 
+    void SelectForm(string val)
+    {
+        formBox.SelectedIndex = (val == "2" || val == "gif") ? 1 : 0;
+    }
+
     void SaveSettings()
     {
         if (loading) return;
@@ -1103,6 +1214,7 @@ class SettingsForm : Form
         string text = "name=" + name + "\r\n"
             + "rope=" + ropeBar.Value + "\r\n"
             + "size=" + sizeBar.Value + "\r\n"
+            + "form=" + (formBox.SelectedIndex == 1 ? "2" : "1") + "\r\n"
             + "cursor=" + styles[index] + "\r\n"
             + "cursorSize=" + cursorSizeBar.Value + "\r\n"
             + "hotkey=" + hotkeyButton.Text + "\r\n"

@@ -32,7 +32,7 @@
 
 | 版本 | 资产 | 内容 |
 | --- | --- | --- |
-| [v1.1.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.1.0) | [Coldy-1.1.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.1.0/Coldy-1.1.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png` |
+| [v1.2.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.2.0) | [Coldy-1.2.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.2.0/Coldy-1.2.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif` |
 
 1. 下载并解压发布包，保持目录结构不变。
 2. 运行 `Coldy.exe`。
@@ -43,7 +43,7 @@
 
 登录时自动启动：按 `Win + R`，输入 `shell:startup`，将 `Coldy.exe` 的快捷方式放入该目录。
 
-`Coldy.exe` 从自身所在目录加载 `assets\coldy.png`，并依据 `Coldy.exe.config` 选择 .NET Framework 4 运行时。
+`Coldy.exe` 从自身所在目录加载 `assets\coldy.png` 和 `assets\coldy-form2.gif`，并依据 `Coldy.exe.config` 选择 .NET Framework 4 运行时。
 
 ## 运行环境
 
@@ -53,7 +53,7 @@
 | --- | --- | --- |
 | 操作系统 | Windows 7 SP1 及以上 | 覆盖 Windows 8、8.1、10、11 |
 | 运行时 | .NET Framework 4.0 及以上 | 4.5 至 4.8 均可。Windows 10 1903 与 Windows 11 已内置 4.8 |
-| 发布包 | v1.1.0 | 无安装程序 |
+| 发布包 | v1.2.0 | 无安装程序 |
 
 未安装 .NET Framework 4 的系统，请先安装 [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48)。
 
@@ -74,6 +74,7 @@
 | 名字 | 更新窗口标题与托盘提示。空值回退为 `Coldy` |
 | 绳子长度 | 调整绳索静止长度，当前值显示在滑块右侧 |
 | 人物大小 | 按显示高度缩放角色，悬挂点同步缩放 |
+| 形态 | 「形态 1」是原来的静图。「形态 2」用同一张图播放蹲跳、眨眼和轻微摇摆 |
 | 光标 | 「跟随场景」按所在控件切换箭头、手型、工字、等待和缩放。「系统默认」恢复系统指针 |
 | 光标大小 | 只在「跟随场景」下生效，整套指针使用同一边长 |
 | 隐藏快捷键 | 录制由两个按键组成的切换热键 |
@@ -116,6 +117,7 @@
 | 名字 | `name` | 字符串 | `Coldy` | 窗口标题与托盘提示 |
 | 绳子长度 | `rope` | 40–320 | 120 | 绳索静止长度，单位为像素 |
 | 人物大小 | `size` | 80–420 | 190 | 角色显示高度，单位为像素 |
+| 形态 | `form` | `1` 或 `2` | `1` | `1` 为静图，`2` 为 `assets/coldy-form2.gif` |
 | 光标 | `cursor` | `scheme` 或 `system` | `scheme` | `scheme` 按场景切换，`system` 恢复系统指针 |
 | 光标大小 | `cursorSize` | 16–128 | 32 | 指针边长，单位为像素 |
 | 隐藏快捷键 | `hotkey`、`hotkeyVk`、`hotkeyVk2` | 两个互异虚拟键码 | `F8` | 同时按下时切换可见性 |
@@ -136,7 +138,7 @@
 | 热键轮询间隔 | 30 毫秒 | 读取两个虚拟键的按下状态 |
 | 悬挂偏移 | 指针尺寸 × 0.45 | 绳索上端相对指针热点的距离 |
 
-`coldy.ini` 在运行时生成，不纳入版本控制。与可执行文件放在同一目录时，名称、绳长、尺寸、指针和热键会被保留。
+`coldy.ini` 在运行时生成，不纳入版本控制。与可执行文件放在同一目录时，名称、绳长、尺寸、形态、指针和热键会被保留。
 
 ## 开发
 
@@ -144,7 +146,7 @@
 
 挂件窗口使用 `WS_EX_LAYERED` 与 `WS_EX_TRANSPARENT`。每帧将绳索和角色绘制到预乘 alpha 的 32 位位图，再通过 `UpdateLayeredWindow` 提交。
 
-绳索为仓库内实现的 Verlet 求解器。段长由距离约束维持，因此绳索弯曲而不被拉长。角色转角取末段方向。积分使用固定时间步；指针高速移动时限制单帧步数；静止一段时间后冻结，避免静止抖动。悬挂点位于头顶绒毛，金属勺不与绳索重叠。
+形态 2 的动图由 `tools/MakeForm2Gif.cs` 从 `assets/coldy.png` 生成，不替换静图。绳索为仓库内实现的 Verlet 求解器。段长由距离约束维持，因此绳索弯曲而不被拉长。角色转角取末段方向。积分使用固定时间步；指针高速移动时限制单帧步数；静止一段时间后冻结，避免静止抖动。悬挂点位于头顶绒毛，金属勺不与绳索重叠。
 
 系统指针由程序绘制。选择样式后替换常用指针资源；选择「系统默认」或正常退出时，通过 `SystemParametersInfo(SPI_SETCURSORS)` 恢复。两个普通按键的组合无法用 `RegisterHotKey` 表达，因此热键改为 `GetAsyncKeyState` 轮询，并在上升沿触发。
 
