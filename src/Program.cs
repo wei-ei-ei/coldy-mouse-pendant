@@ -725,7 +725,7 @@ class SettingsForm : Form
         Controls.Add(sizeValue);
 
         cursorBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        cursorBox.Items.AddRange(new object[] { "箭头", "手型", "十字", "工字", "圆点", "系统默认" });
+        cursorBox.Items.AddRange(new object[] { "跟随场景", "系统默认" });
         cursorBox.SelectedIndex = 0;
         AddRow(186, "光标", cursorBox, 180);
 
@@ -812,7 +812,7 @@ class SettingsForm : Form
         ropeValue.Text = ropeBar.Value.ToString();
         sizeValue.Text = sizeBar.Value.ToString();
         cursorSizeValue.Text = cursorSizeBar.Value.ToString();
-        cursorSizeBar.Enabled = cursorBox.SelectedIndex != 5;
+        cursorSizeBar.Enabled = cursorBox.SelectedIndex != 1;
     }
 
     void ApplyAll(bool cursor)
@@ -840,19 +840,16 @@ class SettingsForm : Form
 
     void ApplyCursor()
     {
-        if (cursorBox.SelectedIndex == 5)
+        if (cursorBox.SelectedIndex == 1)
         {
             CursorFactory.Restore();
             cursorApplied = false;
             status.Text = "已恢复系统光标";
             return;
         }
-        string[] styles = { "arrow", "hand", "cross", "ibeam", "dot" };
-        int index = cursorBox.SelectedIndex;
-        if (index < 0 || index >= styles.Length) index = 0;
-        CursorFactory.Apply(styles[index], cursorSizeBar.Value);
+        CursorFactory.ApplyScheme(cursorSizeBar.Value);
         cursorApplied = true;
-        status.Text = "光标已切换";
+        status.Text = "光标会随文字、链接和窗口边缘切换";
     }
 
     void BeginHotkeyCapture()
@@ -1092,15 +1089,13 @@ class SettingsForm : Form
 
     void SelectCursor(string val)
     {
-        string[] styles = { "arrow", "hand", "cross", "ibeam", "dot", "system" };
-        for (int i = 0; i < styles.Length; i++)
-            if (styles[i] == val) cursorBox.SelectedIndex = i;
+        cursorBox.SelectedIndex = val == "system" ? 1 : 0;
     }
 
     void SaveSettings()
     {
         if (loading) return;
-        string[] styles = { "arrow", "hand", "cross", "ibeam", "dot", "system" };
+        string[] styles = { "scheme", "system" };
         int index = cursorBox.SelectedIndex;
         if (index < 0 || index >= styles.Length) index = 0;
         string name = nameBox.Text.Trim();
@@ -1123,18 +1118,31 @@ class SettingsForm : Form
 
 class CursorFactory
 {
-    static readonly int[] CursorIds = { 32512, 32649, 32513, 32650 };
-
-    public static void Apply(string style, int size)
+    public static void ApplyScheme(int size)
     {
         if (size < 16) size = 16;
         if (size > 128) size = 128;
-        for (int i = 0; i < CursorIds.Length; i++)
-        {
-            IntPtr cur = Make(style, size);
-            if (cur == IntPtr.Zero) continue;
-            if (!SetSystemCursor(cur, CursorIds[i])) DestroyCursor(cur);
-        }
+        Set(32512, "arrow", size);
+        Set(32513, "ibeam", size);
+        Set(32514, "wait", size);
+        Set(32515, "cross", size);
+        Set(32516, "arrow", size);
+        Set(32642, "nwse", size);
+        Set(32643, "nesw", size);
+        Set(32644, "we", size);
+        Set(32645, "ns", size);
+        Set(32646, "move", size);
+        Set(32648, "no", size);
+        Set(32649, "hand", size);
+        Set(32650, "arrow", size);
+        Set(32651, "arrow", size);
+    }
+
+    static void Set(int id, string style, int size)
+    {
+        IntPtr cur = Make(style, size);
+        if (cur == IntPtr.Zero) return;
+        if (!SetSystemCursor(cur, id)) DestroyCursor(cur);
     }
 
     public static void Restore()
@@ -1154,7 +1162,10 @@ class CursorFactory
             if (style == "hand") DrawHand(g, s, out hx, out hy);
             else if (style == "cross") DrawCross(g, size, out hx, out hy);
             else if (style == "ibeam") DrawIBeam(g, size, out hx, out hy);
-            else if (style == "dot") DrawDot(g, size, out hx, out hy);
+            else if (style == "wait") DrawWait(g, size, out hx, out hy);
+            else if (style == "no") DrawNo(g, size, out hx, out hy);
+            else if (style == "we" || style == "ns" || style == "nwse" || style == "nesw" || style == "move")
+                DrawSize(g, size, style, out hx, out hy);
             else DrawArrow(g, s, out hx, out hy);
             return FromBitmap(bmp, hx, hy);
         }
@@ -1223,6 +1234,61 @@ class CursorFactory
             g.DrawLine(pen, x, 3, x, size - 3);
             g.DrawLine(pen, x - size * 0.28f, 3, x + size * 0.28f, 3);
             g.DrawLine(pen, x - size * 0.28f, size - 3, x + size * 0.28f, size - 3);
+        }
+        hx = size / 2;
+        hy = size / 2;
+    }
+
+    static void DrawWait(Graphics g, int size, out int hx, out int hy)
+    {
+        float t = Math.Max(2f, size / 14f);
+        using (var fill = new SolidBrush(Color.White))
+        using (var pen = new Pen(Color.Black, t))
+        {
+            PointF[] top = {
+                new PointF(size * 0.28f, size * 0.12f),
+                new PointF(size * 0.72f, size * 0.12f),
+                new PointF(size * 0.5f, size * 0.48f)
+            };
+            PointF[] bottom = {
+                new PointF(size * 0.5f, size * 0.52f),
+                new PointF(size * 0.72f, size * 0.88f),
+                new PointF(size * 0.28f, size * 0.88f)
+            };
+            g.FillPolygon(fill, top);
+            g.FillPolygon(fill, bottom);
+            g.DrawPolygon(pen, top);
+            g.DrawPolygon(pen, bottom);
+        }
+        hx = size / 2;
+        hy = size / 2;
+    }
+
+    static void DrawNo(Graphics g, int size, out int hx, out int hy)
+    {
+        float m = size * 0.18f;
+        float d = size - m * 2f;
+        using (var pen = new Pen(Color.Black, Math.Max(2f, size / 12f)))
+        {
+            g.DrawEllipse(pen, m, m, d, d);
+            g.DrawLine(pen, m + d * 0.2f, m + d * 0.8f, m + d * 0.8f, m + d * 0.2f);
+        }
+        hx = size / 2;
+        hy = size / 2;
+    }
+
+    static void DrawSize(Graphics g, int size, string kind, out int hx, out int hy)
+    {
+        float m = size * 0.16f;
+        float c = size / 2f;
+        using (var pen = new Pen(Color.Black, Math.Max(2f, size / 12f)))
+        {
+            pen.StartCap = LineCap.Round;
+            pen.EndCap = LineCap.Round;
+            if (kind == "we" || kind == "move") g.DrawLine(pen, m, c, size - m, c);
+            if (kind == "ns" || kind == "move") g.DrawLine(pen, c, m, c, size - m);
+            if (kind == "nwse") g.DrawLine(pen, m, m, size - m, size - m);
+            if (kind == "nesw") g.DrawLine(pen, size - m, m, m, size - m);
         }
         hx = size / 2;
         hy = size / 2;
