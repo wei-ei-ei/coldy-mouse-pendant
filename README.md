@@ -40,6 +40,9 @@
 2. 运行 `Coldy.exe`。
 3. 挂件附着在系统光标上，同时打开设置窗口。
 
+> [!NOTE]
+> 从浏览器下载后，Windows SmartScreen 可能显示「Windows 已保护你的电脑」。`Coldy.exe` 没有代码签名，和多数未签名的小型开源 Release 一样。点击「更多信息」，再点击「仍要运行」。
+
 登录时自动启动：按 `Win + R`，输入 `shell:startup`，将 `Coldy.exe` 的快捷方式放入该目录。
 
 `Coldy.exe` 从自身所在目录加载 `assets\coldy.png`，并依据 `Coldy.exe.config` 选择 .NET Framework 4 运行时。v1.2.0 还会加载同目录的 `assets\coldy-form2.gif`。
