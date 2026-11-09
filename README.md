@@ -32,7 +32,9 @@
 
 | 版本 | 资产 | 内容 |
 | --- | --- | --- |
-| [v1.2.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.2.0) | [Coldy-1.2.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.2.0/Coldy-1.2.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif` |
+| [v1.2.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.2.0)（当前） | [Coldy-1.2.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.2.0/Coldy-1.2.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif` |
+| [v1.1.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.1.0) | [Coldy-1.1.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.1.0/Coldy-1.1.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png` |
+| [v1.0.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.0.0) | [Coldy-1.0.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.0.0/Coldy-1.0.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png` |
 
 1. 下载并解压发布包，保持目录结构不变。
 2. 运行 `Coldy.exe`。
