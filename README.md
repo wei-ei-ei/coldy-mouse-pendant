@@ -28,14 +28,7 @@
 
 ## 安装
 
-发布包可直接运行，无需编译环境。
-
-| 版本 | 资产 | 内容 |
-| --- | --- | --- |
-| [v1.3.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.3.0)（当前） | [Coldy-1.3.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.3.0/Coldy-1.3.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif` |
-| [v1.2.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.2.0) | [Coldy-1.2.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.2.0/Coldy-1.2.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif` |
-| [v1.1.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.1.0) | [Coldy-1.1.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.1.0/Coldy-1.1.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png` |
-| [v1.0.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.0.0) | [Coldy-1.0.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.0.0/Coldy-1.0.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png` |
+发布包可直接运行，无需编译环境。当前版本是 [v1.4.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.4.0)：[Coldy-1.4.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.4.0/Coldy-1.4.0-win.zip)。压缩包内是 `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif`。
 
 1. 下载并解压发布包，保持目录结构不变。
 2. 运行 `Coldy.exe`。
@@ -56,7 +49,7 @@
 | --- | --- | --- |
 | 操作系统 | Windows 7 SP1 及以上 | 覆盖 Windows 8、8.1、10、11 |
 | 运行时 | .NET Framework 4.0 及以上 | 4.5 至 4.8 均可。Windows 10 1903 与 Windows 11 已内置 4.8 |
-| 发布包 | v1.3.0 | 无安装程序 |
+| 发布包 | v1.4.0 | 无安装程序 |
 
 未安装 .NET Framework 4 的系统，请先安装 [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48)。
 
@@ -72,6 +65,8 @@
 
 ### 设置窗口
 
+窗口是一块淡冰色的圆角面板。上方是角色和当前名字，按住这一块可以拖动窗口。右上角是最小化和关闭。输入框、下拉框、按钮和颜色方块同一高度，名字在输入框内垂直居中。
+
 | 项 | 行为 |
 | --- | --- |
 | 名字 | 更新窗口标题与托盘提示。空值回退为 `Coldy` |
@@ -79,7 +74,7 @@
 | 绳子颜色 | 「选择颜色」打开颜色盘，红、绿、蓝各 0–255。按钮右侧的方块显示当前颜色 |
 | 人物大小 | 按显示高度缩放角色，悬挂点同步缩放 |
 | 形态 | 「形态 1」是原来的静图。「形态 2」用同一张图播放蹲跳、眨眼和轻微摇摆 |
-| 光标 | 「跟随场景」按所在控件切换箭头、手型、工字、等待和缩放。拖动窗口边缘时为对应方向的双向箭头。「系统默认」恢复系统指针 |
+| 光标 | 「跟随场景」按所在控件切换箭头、手型、工字、等待和缩放，笔画为白色，外圈留有细边。拖动窗口边缘时为对应方向的双向箭头。「系统默认」恢复系统指针 |
 | 光标大小 | 只在「跟随场景」下生效，整套指针使用同一边长 |
 | 隐藏快捷键 | 录制由两个按键组成的切换热键 |
 | 隐藏人物 | 立即切换挂件可见性 |
@@ -127,7 +122,7 @@
 | 光标大小 | `cursorSize` | 16–128 | 32 | 指针边长，单位为像素 |
 | 隐藏快捷键 | `hotkey`、`hotkeyVk`、`hotkeyVk2` | 两个互异虚拟键码 | `F8` | 同时按下时切换可见性 |
 
-`cursor` 为 `scheme` 时，普通区域是箭头，链接是手型，文本是工字，忙碌是沙漏，窗口边缘是两端带箭头的双向箭头。`system` 会禁用光标大小滑块，并恢复系统指针。旧配置里的 `arrow`、`hand`、`cross`、`ibeam`、`dot` 都会按 `scheme` 读取。
+`cursor` 为 `scheme` 时，普通区域是箭头，链接是手型，文本是工字，忙碌是沙漏，窗口边缘是两端带箭头的双向箭头。这些指针的笔画都是白色，外圈留一道细边，白底上仍然能看见。`system` 会禁用光标大小滑块，并恢复系统指针。旧配置里的 `arrow`、`hand`、`cross`、`ibeam`、`dot` 都会按 `scheme` 读取。
 
 以下为编译期常量，设置窗口不可修改：
 

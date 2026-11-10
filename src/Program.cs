@@ -776,9 +776,9 @@ class SettingsForm : Form
     readonly Timer hotkeyTimer = new Timer();
     readonly TextBox nameBox = new TextBox();
     readonly Panel nameFrame = new Panel();
-    readonly TrackBar ropeBar = new TrackBar();
-    readonly TrackBar sizeBar = new TrackBar();
-    readonly TrackBar cursorSizeBar = new TrackBar();
+    readonly IceSlider ropeBar = new IceSlider();
+    readonly IceSlider sizeBar = new IceSlider();
+    readonly IceSlider cursorSizeBar = new IceSlider();
     readonly ComboBox formBox = new ComboBox();
     readonly ComboBox cursorBox = new ComboBox();
     readonly Button colorButton = new Button();
@@ -790,6 +790,16 @@ class SettingsForm : Form
     readonly Button hideButton = new Button();
     readonly Button exitButton = new Button();
     readonly Label status = new Label();
+    readonly MarkButton minButton = new MarkButton();
+    readonly MarkButton closeButton = new MarkButton();
+    readonly Font headerFont = new Font("Microsoft YaHei UI", 16f, FontStyle.Regular);
+    Bitmap mark;
+    int hairlineY;
+    int markDrawH;
+    int editorX;
+    int labelWidth;
+    bool draggingWindow;
+    Point dragOffset;
     int hotkeyVk = 0x77;
     int hotkeyVk2;
     int capturedVk;
@@ -801,82 +811,141 @@ class SettingsForm : Form
     string settingsPath;
     Color ropeColor = Color.FromArgb(55, 55, 62);
     int boxHeight = 34;
+    static readonly Color Ice = Color.FromArgb(231, 243, 248);
+    static readonly Color Ink = Color.FromArgb(45, 58, 68);
+    static readonly Color Field = Color.White;
+    static readonly Color Line = Color.FromArgb(214, 226, 234);
+    static readonly Color Muted = Color.FromArgb(90, 104, 116);
 
     public SettingsForm()
     {
         Text = "Coldy";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(520, 520);
+        DoubleBuffered = true;
         Font = new Font("Microsoft YaHei UI", 10.5f);
+        BackColor = Ice;
+        ForeColor = Ink;
         KeyPreview = true;
         string dir = Path.GetDirectoryName(Application.ExecutablePath);
         settingsPath = Path.Combine(dir, "coldy.ini");
+        string markPath = Path.Combine(dir, "assets", "coldy.png");
+        if (File.Exists(markPath))
+        {
+            try { mark = new Bitmap(markPath); }
+            catch { mark = null; }
+        }
+
         boxHeight = TextRenderer.MeasureText("选择颜色", Font).Height + 16;
         if (boxHeight < 34) boxHeight = 34;
+        labelWidth = TextRenderer.MeasureText("隐藏快捷键", Font).Width + 16;
+        editorX = 28 + labelWidth;
+        int valueW = TextRenderer.MeasureText("420", Font).Width + 16;
+        int sliderW = 220;
+        int clientW = editorX + sliderW + 10 + valueW + 28;
+        int hotkeyW = ButtonWidth("请按两个键");
+        int hideW = ButtonWidth("隐藏人物");
+        int rowW = editorX + hotkeyW + 12 + hideW + 28;
+        if (clientW < rowW) clientW = rowW;
+        int colorW = ButtonWidth("选择颜色");
+        int colorRow = editorX + colorW + 8 + boxHeight + 28;
+        if (clientW < colorRow) clientW = colorRow;
+        if (clientW < 520) clientW = 520;
+        ClientSize = new Size(clientW, 720);
+
+        int chrome = boxHeight;
+        if (chrome > 40) chrome = 40;
+        if (chrome < 32) chrome = 32;
+        closeButton.CloseMark = true;
+        closeButton.SetBounds(clientW - 16 - chrome, 12, chrome, chrome);
+        minButton.SetBounds(closeButton.Left - 6 - chrome, 12, chrome, chrome);
+        Controls.Add(minButton);
+        Controls.Add(closeButton);
+
+        markDrawH = boxHeight * 2 + 16;
+        if (markDrawH < 88) markDrawH = 88;
+        hairlineY = 16 + markDrawH + 18;
+        int y = hairlineY + 22;
+        int gap = 12;
+        int right = clientW - 28;
+        int fieldW = right - editorX;
+        if (fieldW > 300) fieldW = 300;
+
         nameBox.BorderStyle = BorderStyle.None;
-        nameBox.BackColor = SystemColors.Window;
+        nameBox.BackColor = Field;
         nameFrame.BorderStyle = BorderStyle.FixedSingle;
-        nameFrame.BackColor = SystemColors.Window;
+        nameFrame.BackColor = Field;
         nameFrame.Controls.Add(nameBox);
-        AddRow(28, "名字", nameFrame, 280);
+        AddRow(y, "名字", nameFrame, fieldW, true);
         nameBox.Text = "Coldy";
+        y += boxHeight + gap;
 
         SetupBar(ropeBar, 40, 320, 120);
         SetupBar(sizeBar, 80, 420, 190);
         SetupBar(cursorSizeBar, 16, 128, 32);
-        AddRow(78, "绳子长度", ropeBar, 250);
-        ropeValue.SetBounds(390, 82, 60, 24);
-        Controls.Add(ropeValue);
+        AddRow(y, "绳子长度", ropeBar, sliderW, false);
+        PlaceValue(ropeValue, y, sliderW, valueW);
+        y += boxHeight + gap;
 
+        PrepareButton(colorButton);
         colorButton.Text = "选择颜色";
-        AddRow(132, "绳子颜色", colorButton, 160);
+        AddRow(y, "绳子颜色", colorButton, colorW, true);
         FitButton(colorButton, "选择颜色");
         colorSwatch.BorderStyle = BorderStyle.FixedSingle;
         colorSwatch.SetBounds(colorButton.Right + 8, colorButton.Top, boxHeight, boxHeight);
         Controls.Add(colorSwatch);
         ShowRopeColor();
+        y += boxHeight + gap;
 
-        AddRow(182, "人物大小", sizeBar, 250);
-        sizeValue.SetBounds(390, 186, 60, 24);
-        Controls.Add(sizeValue);
+        AddRow(y, "人物大小", sizeBar, sliderW, false);
+        PlaceValue(sizeValue, y, sliderW, valueW);
+        y += boxHeight + gap;
 
-        formBox.IntegralHeight = false;
-        formBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        PrepareCombo(formBox);
         formBox.Items.AddRange(new object[] { "形态 1", "形态 2" });
         formBox.SelectedIndex = 0;
-        AddRow(236, "形态", formBox, 180);
+        AddRow(y, "形态", formBox, fieldW < 200 ? fieldW : 200, true);
+        y += boxHeight + gap;
 
-        cursorBox.IntegralHeight = false;
-        cursorBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        PrepareCombo(cursorBox);
         cursorBox.Items.AddRange(new object[] { "跟随场景", "系统默认" });
         cursorBox.SelectedIndex = 0;
-        AddRow(286, "光标", cursorBox, 180);
+        AddRow(y, "光标", cursorBox, fieldW < 200 ? fieldW : 200, true);
+        y += boxHeight + gap;
 
-        AddRow(336, "光标大小", cursorSizeBar, 250);
-        cursorSizeValue.SetBounds(390, 340, 60, 24);
-        Controls.Add(cursorSizeValue);
+        AddRow(y, "光标大小", cursorSizeBar, sliderW, false);
+        PlaceValue(cursorSizeValue, y, sliderW, valueW);
+        y += boxHeight + gap;
 
+        PrepareButton(hotkeyButton);
         hotkeyButton.Text = "F8";
-        AddRow(390, "隐藏快捷键", hotkeyButton, 200);
+        AddRow(y, "隐藏快捷键", hotkeyButton, hotkeyW, true);
+        FitButton(hotkeyButton, "请按两个键");
+        PrepareButton(hideButton);
         hideButton.Text = "隐藏人物";
         Controls.Add(hideButton);
         FitButton(hideButton, "隐藏人物");
-        int hideLeft = hotkeyButton.Right + 12;
-        int needed = hideLeft + hideButton.Width + 24;
-        if (needed > ClientSize.Width) ClientSize = new Size(needed, ClientSize.Height);
-        hideButton.SetBounds(ClientSize.Width - 24 - hideButton.Width, hotkeyButton.Top, hideButton.Width, boxHeight);
+        hideButton.SetBounds(right - hideButton.Width, y, hideButton.Width, boxHeight);
+        y += boxHeight + gap + 8;
 
         exitButton.Text = "退出";
-        exitButton.SetBounds(24, 460, 100, boxHeight);
+        exitButton.FlatStyle = FlatStyle.Flat;
+        exitButton.UseVisualStyleBackColor = false;
+        exitButton.BackColor = Ice;
+        exitButton.ForeColor = Muted;
+        exitButton.FlatAppearance.BorderSize = 0;
+        exitButton.Padding = new Padding(0);
+        exitButton.TextAlign = ContentAlignment.MiddleLeft;
+        int exitW = TextRenderer.MeasureText("退出", Font).Width + 28;
+        exitButton.SetBounds(28, y, exitW, boxHeight);
         Controls.Add(exitButton);
-        int bottom = exitButton.Bottom + 16;
-        if (bottom > ClientSize.Height) ClientSize = new Size(ClientSize.Width, bottom);
-
-        status.SetBounds(140, exitButton.Top + (boxHeight - 28) / 2, 360, 28);
-        status.ForeColor = Color.DimGray;
+        status.AutoSize = false;
+        status.BackColor = Ice;
+        status.ForeColor = Muted;
+        status.TextAlign = ContentAlignment.MiddleLeft;
+        status.SetBounds(exitButton.Right + 8, exitButton.Top, right - exitButton.Right - 8, boxHeight);
         Controls.Add(status);
+        ClientSize = new Size(clientW, exitButton.Bottom + 28);
 
         LoadSettings();
         ShowHotkey();
@@ -885,7 +954,11 @@ class SettingsForm : Form
         loading = false;
         ApplyAll(true);
 
-        nameBox.TextChanged += delegate { if (!loading) ApplyAll(false); };
+        nameBox.TextChanged += delegate
+        {
+            Invalidate();
+            if (!loading) ApplyAll(false);
+        };
         ropeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
         colorButton.Click += delegate { PickRopeColor(); };
         sizeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
@@ -902,6 +975,8 @@ class SettingsForm : Form
         hotkeyButton.Click += delegate { BeginHotkeyCapture(); };
         hideButton.Click += delegate { ToggleHidden(); };
         exitButton.Click += delegate { Close(); };
+        minButton.Click += delegate { WindowState = FormWindowState.Minimized; };
+        closeButton.Click += delegate { Close(); };
 
         var menu = pendant.TrayIcon.ContextMenu;
         menu.MenuItems.Add(new MenuItem("显示控制台", delegate { Show(); Activate(); }));
@@ -913,8 +988,19 @@ class SettingsForm : Form
         hotkeyTimer.Tick += delegate { PollHotkey(); };
         hotkeyTimer.Start();
         MatchBoxHeights();
+        ApplyRound();
 
         pendant.Show();
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            CreateParams cp = base.CreateParams;
+            cp.ClassStyle |= 0x00020000;
+            return cp;
+        }
     }
 
     void MatchBoxHeights()
@@ -932,6 +1018,8 @@ class SettingsForm : Form
         cursorBox.Height = boxHeight;
         colorSwatch.SetBounds(colorButton.Right + 8, colorButton.Top, boxHeight, boxHeight);
         hideButton.Top = hotkeyButton.Top;
+        nameFrame.Height = boxHeight;
+        CenterNameText();
     }
 
     void CenterNameText()
@@ -957,25 +1045,66 @@ class SettingsForm : Form
         chordDown = down;
     }
 
-    void AddRow(int y, string caption, Control editor, int editorWidth)
+    void AddRow(int y, string caption, Control editor, int editorWidth, bool box)
     {
         var label = new Label();
         label.Text = caption;
-        label.SetBounds(24, y + (boxHeight - 24) / 2, 110, 24);
+        label.AutoSize = false;
+        label.BackColor = Ice;
+        label.ForeColor = Ink;
         label.TextAlign = ContentAlignment.MiddleLeft;
-        editor.SetBounds(140, y, editorWidth, boxHeight);
+        label.SetBounds(28, y, labelWidth, boxHeight);
+        int editorH = box ? boxHeight : editor.Height;
+        int editorY = y + (boxHeight - editorH) / 2;
+        editor.SetBounds(editorX, editorY, editorWidth, editorH);
         Controls.Add(label);
         Controls.Add(editor);
     }
 
-    static void SetupBar(TrackBar bar, int min, int max, int value)
+    void PlaceValue(Label label, int y, int sliderW, int valueW)
+    {
+        label.AutoSize = false;
+        label.BackColor = Ice;
+        label.ForeColor = Ink;
+        label.TextAlign = ContentAlignment.MiddleLeft;
+        label.SetBounds(editorX + sliderW + 10, y, valueW, boxHeight);
+        Controls.Add(label);
+    }
+
+    int ButtonWidth(string text)
+    {
+        int width = TextRenderer.MeasureText(text, Font).Width + 28;
+        if (width < 96) width = 96;
+        return width;
+    }
+
+    static void PrepareButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.UseVisualStyleBackColor = false;
+        button.BackColor = Field;
+        button.ForeColor = Ink;
+        button.FlatAppearance.BorderColor = Color.FromArgb(196, 214, 224);
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(220, 236, 244);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(206, 228, 238);
+    }
+
+    static void PrepareCombo(ComboBox box)
+    {
+        box.IntegralHeight = false;
+        box.DropDownStyle = ComboBoxStyle.DropDownList;
+        box.FlatStyle = FlatStyle.Flat;
+        box.BackColor = Field;
+        box.ForeColor = Ink;
+    }
+
+    void SetupBar(IceSlider bar, int min, int max, int value)
     {
         bar.Minimum = min;
         bar.Maximum = max;
-        bar.TickFrequency = Math.Max(1, (max - min) / 8);
         bar.Value = value;
-        bar.AutoSize = false;
-        bar.Height = 32;
+        bar.Height = 28;
     }
 
     void PickRopeColor()
@@ -1217,6 +1346,90 @@ class SettingsForm : Form
         base.OnHandleCreated(e);
         MatchBoxHeights();
         ShowHotkey();
+        ApplyRound();
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        nameBox.SelectionStart = nameBox.Text.Length;
+        nameBox.SelectionLength = 0;
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (!IsHandleCreated || WindowState == FormWindowState.Minimized) return;
+        ApplyRound();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        string title = nameBox.Text.Trim();
+        if (title.Length == 0) title = "Coldy";
+        int top = 16;
+        int textX = 28;
+        if (mark != null && mark.Height > 0 && markDrawH > 0)
+        {
+            int w = mark.Width * markDrawH / mark.Height;
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            e.Graphics.DrawImage(mark, new Rectangle(28, top, w, markDrawH));
+            textX = 28 + w + 16;
+        }
+        int textRight = minButton.Left - 12;
+        if (textRight < textX + 40) textRight = ClientSize.Width - 24;
+        var rect = new Rectangle(textX, top, textRight - textX, markDrawH);
+        TextRenderer.DrawText(e.Graphics, title, headerFont, rect, Ink,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        using (var pen = new Pen(Line))
+            e.Graphics.DrawLine(pen, 28, hairlineY, ClientSize.Width - 28, hairlineY);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button != MouseButtons.Left || e.Y >= hairlineY) return;
+        draggingWindow = true;
+        dragOffset = e.Location;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!draggingWindow) return;
+        Point screen = PointToScreen(e.Location);
+        Location = new Point(screen.X - dragOffset.X, screen.Y - dragOffset.Y);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        draggingWindow = false;
+    }
+
+    void ApplyRound()
+    {
+        if (Width < 8 || Height < 8) return;
+        using (GraphicsPath path = RoundPath(Width, Height, 20))
+        {
+            Region old = Region;
+            Region = new Region(path);
+            if (old != null) old.Dispose();
+        }
+    }
+
+    static GraphicsPath RoundPath(int width, int height, int radius)
+    {
+        var path = new GraphicsPath();
+        int d = radius * 2;
+        if (d > width) d = width;
+        if (d > height) d = height;
+        path.AddArc(0, 0, d, d, 180, 90);
+        path.AddArc(width - d - 1, 0, d, d, 270, 90);
+        path.AddArc(width - d - 1, height - d - 1, d, d, 0, 90);
+        path.AddArc(0, height - d - 1, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1224,6 +1437,8 @@ class SettingsForm : Form
         hotkeyTimer.Stop();
         if (cursorApplied) CursorFactory.Restore();
         SaveSettings();
+        if (mark != null) mark.Dispose();
+        mark = null;
         if (pendant != null && !pendant.IsDisposed) pendant.Close();
         base.OnFormClosing(e);
     }
@@ -1302,7 +1517,7 @@ class SettingsForm : Form
         return 0;
     }
 
-    static void SetBar(TrackBar bar, string val)
+    static void SetBar(IceSlider bar, string val)
     {
         int n;
         if (!int.TryParse(val, out n)) return;
@@ -1345,6 +1560,180 @@ class SettingsForm : Form
 
     [DllImport("user32.dll")]
     static extern short GetAsyncKeyState(int vKey);
+}
+
+class IceSlider : Control
+{
+    int minimum;
+    int maximum = 100;
+    int current;
+    bool dragging;
+    public event EventHandler ValueChanged;
+
+    public int Minimum
+    {
+        get { return minimum; }
+        set { minimum = value; Invalidate(); }
+    }
+
+    public int Maximum
+    {
+        get { return maximum; }
+        set { maximum = value; Invalidate(); }
+    }
+
+    public int Value
+    {
+        get { return current; }
+        set
+        {
+            if (value < minimum) value = minimum;
+            if (value > maximum) value = maximum;
+            if (current == value) return;
+            current = value;
+            Invalidate();
+            if (ValueChanged != null) ValueChanged(this, EventArgs.Empty);
+        }
+    }
+
+    public IceSlider()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        Height = 28;
+        Cursor = Cursors.Hand;
+        BackColor = Color.FromArgb(231, 243, 248);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (!Enabled || e.Button != MouseButtons.Left) return;
+        dragging = true;
+        Capture = true;
+        SetFromX(e.X);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (dragging) SetFromX(e.X);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        dragging = false;
+    }
+
+    protected override void OnEnabledChanged(EventArgs e)
+    {
+        base.OnEnabledChanged(e);
+        Invalidate();
+    }
+
+    void SetFromX(int x)
+    {
+        int pad = 8;
+        int span = Width - pad * 2;
+        if (span < 1) span = 1;
+        float t = (x - pad) / (float)span;
+        if (t < 0f) t = 0f;
+        if (t > 1f) t = 1f;
+        int range = maximum - minimum;
+        if (range < 1) range = 1;
+        Value = minimum + (int)Math.Round(t * range);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        int pad = 8;
+        int cy = Height / 2;
+        int trackW = Width - pad * 2;
+        if (trackW < 1) trackW = 1;
+        int range = maximum - minimum;
+        float t = range <= 0 ? 0f : (current - minimum) / (float)range;
+        int fillW = (int)(trackW * t);
+        Color fill = Enabled ? Color.FromArgb(75, 168, 212) : Color.FromArgb(170, 186, 196);
+        using (var brush = new SolidBrush(Color.FromArgb(206, 222, 232)))
+            g.FillRectangle(brush, pad, cy - 2, trackW, 4);
+        if (fillW > 0)
+        {
+            using (var brush = new SolidBrush(fill))
+                g.FillRectangle(brush, pad, cy - 2, fillW, 4);
+        }
+        int thumb = 14;
+        int tx = pad + fillW - thumb / 2;
+        if (tx < pad - 2) tx = pad - 2;
+        if (tx > pad + trackW - thumb + 2) tx = pad + trackW - thumb + 2;
+        using (var brush = new SolidBrush(Color.White))
+            g.FillEllipse(brush, tx, cy - thumb / 2, thumb, thumb);
+        using (var pen = new Pen(fill, 2f))
+            g.DrawEllipse(pen, tx, cy - thumb / 2, thumb, thumb);
+    }
+}
+
+class MarkButton : Control
+{
+    bool close;
+    bool hot;
+
+    public bool CloseMark
+    {
+        get { return close; }
+        set { close = value; Invalidate(); }
+    }
+
+    public MarkButton()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        Cursor = Cursors.Hand;
+        BackColor = Color.FromArgb(231, 243, 248);
+        Size = new Size(34, 34);
+        TabStop = false;
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        base.OnMouseEnter(e);
+        hot = true;
+        Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        hot = false;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        if (hot)
+        {
+            using (var brush = new SolidBrush(Color.FromArgb(214, 228, 236)))
+                g.FillEllipse(brush, 1, 1, Width - 3, Height - 3);
+        }
+        using (var pen = new Pen(Color.FromArgb(45, 58, 68), 2f))
+        {
+            pen.StartCap = LineCap.Round;
+            pen.EndCap = LineCap.Round;
+            float m = Width * 0.32f;
+            if (close)
+            {
+                g.DrawLine(pen, m, m, Width - m, Height - m);
+                g.DrawLine(pen, Width - m, m, m, Height - m);
+            }
+            else
+            {
+                float y = Height * 0.62f;
+                g.DrawLine(pen, m, y, Width - m, y);
+            }
+        }
+    }
 }
 
 class CursorFactory
@@ -1439,35 +1828,40 @@ class CursorFactory
 
     static void DrawCross(Graphics g, int size, out int hx, out int hy)
     {
-        float t = Math.Max(2f, size / 10f);
-        using (var pen = new Pen(Color.White, t))
-        {
-            pen.StartCap = LineCap.Round;
-            pen.EndCap = LineCap.Round;
-            g.DrawLine(pen, size / 2f, 2, size / 2f, size - 2);
-            g.DrawLine(pen, 2, size / 2f, size - 2, size / 2f);
-        }
-        using (var pen = new Pen(Color.Black, Math.Max(1f, t * 0.35f)))
-        {
-            g.DrawLine(pen, size / 2f, 2, size / 2f, size - 2);
-            g.DrawLine(pen, 2, size / 2f, size - 2, size / 2f);
-        }
+        float t = Math.Max(2.2f, size / 10f);
+        StrokeWhite(g, t, size / 2f, 2, size / 2f, size - 2);
+        StrokeWhite(g, t, 2, size / 2f, size - 2, size / 2f);
         hx = size / 2;
         hy = size / 2;
     }
 
     static void DrawIBeam(Graphics g, int size, out int hx, out int hy)
     {
-        float t = Math.Max(2f, size / 14f);
-        using (var pen = new Pen(Color.Black, t))
-        {
-            float x = size / 2f;
-            g.DrawLine(pen, x, 3, x, size - 3);
-            g.DrawLine(pen, x - size * 0.28f, 3, x + size * 0.28f, 3);
-            g.DrawLine(pen, x - size * 0.28f, size - 3, x + size * 0.28f, size - 3);
-        }
+        float t = Math.Max(2.2f, size / 9f);
+        float x = size / 2f;
+        float arm = size * 0.28f;
+        float top = 3f;
+        float bottom = size - 3f;
+        StrokeWhite(g, t, x, top, x, bottom);
+        StrokeWhite(g, t, x - arm, top, x + arm, top);
+        StrokeWhite(g, t, x - arm, bottom, x + arm, bottom);
         hx = size / 2;
         hy = size / 2;
+    }
+
+    static void StrokeWhite(Graphics g, float width, float x1, float y1, float x2, float y2)
+    {
+        float edge = Math.Max(1.2f, width * 0.5f);
+        using (var outline = new Pen(Color.Black, width + edge * 2f))
+        using (var ink = new Pen(Color.White, width))
+        {
+            outline.StartCap = LineCap.Round;
+            outline.EndCap = LineCap.Round;
+            ink.StartCap = LineCap.Round;
+            ink.EndCap = LineCap.Round;
+            g.DrawLine(outline, x1, y1, x2, y2);
+            g.DrawLine(ink, x1, y1, x2, y2);
+        }
     }
 
     static void DrawWait(Graphics g, int size, out int hx, out int hy)
@@ -1499,10 +1893,19 @@ class CursorFactory
     {
         float m = size * 0.18f;
         float d = size - m * 2f;
-        using (var pen = new Pen(Color.Black, Math.Max(2f, size / 12f)))
+        float t = Math.Max(2.2f, size / 12f);
+        float edge = Math.Max(1.2f, t * 0.5f);
+        using (var outline = new Pen(Color.Black, t + edge * 2f))
+        using (var ink = new Pen(Color.White, t))
         {
-            g.DrawEllipse(pen, m, m, d, d);
-            g.DrawLine(pen, m + d * 0.2f, m + d * 0.8f, m + d * 0.8f, m + d * 0.2f);
+            outline.StartCap = LineCap.Round;
+            outline.EndCap = LineCap.Round;
+            ink.StartCap = LineCap.Round;
+            ink.EndCap = LineCap.Round;
+            g.DrawEllipse(outline, m, m, d, d);
+            g.DrawLine(outline, m + d * 0.2f, m + d * 0.8f, m + d * 0.8f, m + d * 0.2f);
+            g.DrawEllipse(ink, m, m, d, d);
+            g.DrawLine(ink, m + d * 0.2f, m + d * 0.8f, m + d * 0.8f, m + d * 0.2f);
         }
         hx = size / 2;
         hy = size / 2;
