@@ -28,14 +28,7 @@
 
 ## 安装
 
-发布包可直接运行，无需编译环境。
-
-| 版本 | 资产 | 内容 |
-| --- | --- | --- |
-| [v1.3.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.3.0)（当前） | [Coldy-1.3.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.3.0/Coldy-1.3.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif` |
-| [v1.2.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.2.0) | [Coldy-1.2.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.2.0/Coldy-1.2.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif` |
-| [v1.1.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.1.0) | [Coldy-1.1.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.1.0/Coldy-1.1.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png` |
-| [v1.0.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.0.0) | [Coldy-1.0.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.0.0/Coldy-1.0.0-win.zip) | `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png` |
+发布包可直接运行，无需编译环境。当前版本是 [v1.4.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.4.0)：[Coldy-1.4.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.4.0/Coldy-1.4.0-win.zip)。压缩包内是 `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif`。
 
 1. 下载并解压发布包，保持目录结构不变。
 2. 运行 `Coldy.exe`。
@@ -46,9 +39,7 @@
 
 登录时自动启动：按 `Win + R`，输入 `shell:startup`，将 `Coldy.exe` 的快捷方式放入该目录。
 
-`Coldy.exe` 从自身所在目录加载 `assets\coldy.png`，并依据 `Coldy.exe.config` 选择 .NET Framework 4 运行时。v1.2.0 和 v1.3.0 还会加载同目录的 `assets\coldy-form2.gif`。
-
-v1.3.0 的改动：拖动窗口边缘时，指针改为两端带箭头的双向箭头。设置窗口可以打开颜色盘修改绳子颜色，红、绿、蓝各为 0–255，按钮旁边的方块显示当前颜色，默认仍是深灰色 `55,55,62`。名字框、下拉框和按钮改为同一高度，名字文字在输入框内垂直居中。
+`Coldy.exe` 从自身所在目录加载 `assets\coldy.png` 和 `assets\coldy-form2.gif`，并依据 `Coldy.exe.config` 选择 .NET Framework 4 运行时。
 
 ## 运行环境
 
@@ -58,7 +49,7 @@ v1.3.0 的改动：拖动窗口边缘时，指针改为两端带箭头的双向�
 | --- | --- | --- |
 | 操作系统 | Windows 7 SP1 及以上 | 覆盖 Windows 8、8.1、10、11 |
 | 运行时 | .NET Framework 4.0 及以上 | 4.5 至 4.8 均可。Windows 10 1903 与 Windows 11 已内置 4.8 |
-| 发布包 | v1.3.0 | 无安装程序 |
+| 发布包 | v1.4.0 | 无安装程序 |
 
 未安装 .NET Framework 4 的系统，请先安装 [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48)。
 
@@ -74,13 +65,17 @@ v1.3.0 的改动：拖动窗口边缘时，指针改为两端带箭头的双向�
 
 ### 设置窗口
 
+窗口是一块淡冰色的圆角面板。上方是角色和当前名字，按住这一块可以拖动窗口。右上角是最小化和关闭。输入框、下拉框、按钮和颜色方块同一高度，名字在输入框内垂直居中。
+
 | 项 | 行为 |
 | --- | --- |
 | 名字 | 更新窗口标题与托盘提示。空值回退为 `Coldy` |
 | 绳子长度 | 调整绳索静止长度，当前值显示在滑块右侧 |
+| 绳子颜色 | 「选择颜色」打开颜色盘，红、绿、蓝各 0–255。按钮右侧的方块显示当前颜色 |
 | 人物大小 | 按显示高度缩放角色，悬挂点同步缩放 |
-| 光标 | 在箭头、手型、十字、工字、圆点之间切换系统指针。选择「系统默认」时恢复系统指针 |
-| 光标大小 | 仅对上述五种自绘指针生效 |
+| 形态 | 「形态 1」是原来的静图。「形态 2」用同一张图播放蹲跳、眨眼和轻微摇摆 |
+| 光标 | 「跟随场景」按所在控件切换箭头、手型、工字、等待和缩放，笔画为白色，外圈留有细边。拖动窗口边缘时为对应方向的双向箭头。「系统默认」恢复系统指针 |
+| 光标大小 | 只在「跟随场景」下生效，整套指针使用同一边长 |
 | 隐藏快捷键 | 录制由两个按键组成的切换热键 |
 | 隐藏人物 | 立即切换挂件可见性 |
 | 退出 | 关闭进程并恢复系统光标 |
@@ -120,23 +115,14 @@ v1.3.0 的改动：拖动窗口边缘时，指针改为两端带箭头的双向�
 | --- | --- | --- | --- | --- |
 | 名字 | `name` | 字符串 | `Coldy` | 窗口标题与托盘提示 |
 | 绳子长度 | `rope` | 40–320 | 120 | 绳索静止长度，单位为像素 |
+| 绳子颜色 | `ropeColor` | `R,G,B`，各 0–255 | `55,55,62` | 绳索颜色。默认是当前的深灰色 |
 | 人物大小 | `size` | 80–420 | 190 | 角色显示高度，单位为像素 |
-| 光标 | `cursor` | 见下表 | `arrow` | 系统指针样式 |
+| 形态 | `form` | `1` 或 `2` | `1` | `1` 为静图，`2` 为 `assets/coldy-form2.gif` |
+| 光标 | `cursor` | `scheme` 或 `system` | `scheme` | `scheme` 按场景切换，`system` 恢复系统指针 |
 | 光标大小 | `cursorSize` | 16–128 | 32 | 指针边长，单位为像素 |
 | 隐藏快捷键 | `hotkey`、`hotkeyVk`、`hotkeyVk2` | 两个互异虚拟键码 | `F8` | 同时按下时切换可见性 |
 
-`cursor` 取值：
-
-| 界面 | 值 |
-| --- | --- |
-| 箭头 | `arrow` |
-| 手型 | `hand` |
-| 十字 | `cross` |
-| 工字 | `ibeam` |
-| 圆点 | `dot` |
-| 系统默认 | `system` |
-
-`cursor` 为 `system` 时，光标大小滑块禁用。
+`cursor` 为 `scheme` 时，普通区域是箭头，链接是手型，文本是工字，忙碌是沙漏，窗口边缘是两端带箭头的双向箭头。这些指针的笔画都是白色，外圈留一道细边，白底上仍然能看见。`system` 会禁用光标大小滑块，并恢复系统指针。旧配置里的 `arrow`、`hand`、`cross`、`ibeam`、`dot` 都会按 `scheme` 读取。
 
 以下为编译期常量，设置窗口不可修改：
 
@@ -152,7 +138,7 @@ v1.3.0 的改动：拖动窗口边缘时，指针改为两端带箭头的双向�
 | 热键轮询间隔 | 30 毫秒 | 读取两个虚拟键的按下状态 |
 | 悬挂偏移 | 指针尺寸 × 0.45 | 绳索上端相对指针热点的距离 |
 
-`coldy.ini` 在运行时生成，不纳入版本控制。与可执行文件放在同一目录时，名称、绳长、尺寸、指针和热键会被保留。
+`coldy.ini` 在运行时生成，不纳入版本控制。与可执行文件放在同一目录时，名称、绳长、绳子颜色、尺寸、形态、指针和热键会被保留。
 
 ## 开发
 
@@ -160,7 +146,7 @@ v1.3.0 的改动：拖动窗口边缘时，指针改为两端带箭头的双向�
 
 挂件窗口使用 `WS_EX_LAYERED` 与 `WS_EX_TRANSPARENT`。每帧将绳索和角色绘制到预乘 alpha 的 32 位位图，再通过 `UpdateLayeredWindow` 提交。
 
-绳索为仓库内实现的 Verlet 求解器。段长由距离约束维持，因此绳索弯曲而不被拉长。角色转角取末段方向。积分使用固定时间步；指针高速移动时限制单帧步数；静止一段时间后冻结，避免静止抖动。悬挂点位于头顶绒毛，金属勺不与绳索重叠。
+形态 2 的动图由 `tools/MakeForm2Gif.cs` 从 `assets/coldy.png` 生成，不替换静图。绳索为仓库内实现的 Verlet 求解器。段长由距离约束维持，因此绳索弯曲而不被拉长。角色转角取末段方向。积分使用固定时间步；指针高速移动时限制单帧步数；静止一段时间后冻结，避免静止抖动。悬挂点位于头顶绒毛，金属勺不与绳索重叠。
 
 系统指针由程序绘制。选择样式后替换常用指针资源；选择「系统默认」或正常退出时，通过 `SystemParametersInfo(SPI_SETCURSORS)` 恢复。两个普通按键的组合无法用 `RegisterHotKey` 表达，因此热键改为 `GetAsyncKeyState` 轮询，并在上升沿触发。
 
