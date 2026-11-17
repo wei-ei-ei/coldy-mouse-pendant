@@ -28,7 +28,7 @@
 
 ## 安装
 
-发布包可直接运行，无需编译环境。当前版本是 [v1.5.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.5.0)：[Coldy-1.5.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.5.0/Coldy-1.5.0-win.zip)。压缩包内是 `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif`。
+发布包可直接运行，无需编译环境。当前版本是 [v1.6.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.6.0)：[Coldy-1.6.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.6.0/Coldy-1.6.0-win.zip)。压缩包内是 `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif`、`assets/coldy-form4.gif`、`assets/coldy-logo.png`。
 
 1. 下载并解压发布包，保持目录结构不变。
 2. 运行 `Coldy.exe`。
@@ -39,7 +39,7 @@
 
 登录时自动启动：按 `Win + R`，输入 `shell:startup`，将 `Coldy.exe` 的快捷方式放入该目录。
 
-`Coldy.exe` 从自身所在目录加载 `assets\coldy.png` 和 `assets\coldy-form2.gif`，并依据 `Coldy.exe.config` 选择 .NET Framework 4 运行时。
+`Coldy.exe` 从自身所在目录加载 `assets\coldy.png`、`assets\coldy-form2.gif`、`assets\coldy-form4.gif` 和 `assets\coldy-logo.png`，并依据 `Coldy.exe.config` 选择 .NET Framework 4 运行时。
 
 ## 运行环境
 
@@ -49,7 +49,7 @@
 | --- | --- | --- |
 | 操作系统 | Windows 7 SP1 及以上 | 覆盖 Windows 8、8.1、10、11 |
 | 运行时 | .NET Framework 4.0 及以上 | 4.5 至 4.8 均可。Windows 10 1903 与 Windows 11 已内置 4.8 |
-| 发布包 | v1.5.0 | 无安装程序 |
+| 发布包 | v1.6.0 | 无安装程序 |
 
 未安装 .NET Framework 4 的系统，请先安装 [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48)。
 
