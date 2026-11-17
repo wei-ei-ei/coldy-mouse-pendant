@@ -17,7 +17,7 @@ using Microsoft.Win32;
 // The pendant itself is a transparent, topmost, click-through layered window.
 class Program
 {
-    public const string AppVersion = "1.5.0";
+    public const string AppVersion = "1.6.0";
     static EventWaitHandle showEvent;
 
     [STAThread]
@@ -74,10 +74,27 @@ class PendantForm : Form
     Bitmap[] form2;
     float anchor2X;
     float anchor2Y;
+    Bitmap[] form4;
+    float anchor4X;
+    float anchor4Y;
+    // Every form is scaled by its own opaque height, so the "人物大小"
+    // slider produces exactly the same on-screen snowman height everywhere.
+    float bodySpriteH = 1f;
+    float body2H = 1f;
+    float body4H = 1f;
     int formIndex;
     int animFrame;
     double animTime;
     const int AnimFrameMs = 100;
+    // One bounce in about three quarters of a second, close to the recorded dance.
+    const int SingFrameMs = 8;
+    // Scaled singing frames, shifted inside the bitmap so the bob never resamples the edge.
+    Bitmap[] singScaled;
+    int singScaledW;
+    int singScaledH;
+    Bitmap singShifted;
+    int singReadyFrame = -1;
+    float singReadyDip = -1f;
     readonly Rope rope = new Rope(RopeSegments, 120f, Gravity);
     float scale;
     float anchorX;
@@ -85,6 +102,9 @@ class PendantForm : Form
     float ropeLength = 120f;
     float displayHeight = 190f;
     float cursorSize = 32f;
+    // Hang offset uses the pointer size that is actually in effect. In system
+    // cursor mode that is the system cursor, not the (possibly huge) scheme size.
+    float cursorScale = 32f;
     Color ropeColor = Color.FromArgb(230, 55, 55, 62);
     bool hidden;
     bool hiddenApplied;
@@ -135,6 +155,29 @@ class PendantForm : Form
                 form2 = null;
             }
         }
+        // Form 3 is kept in the repository as a draft but is no longer loaded.
+        string frontPath = Path.Combine(dir, "assets", "coldy-form4.gif");
+        if (File.Exists(frontPath))
+        {
+            try
+            {
+                form4 = LoadGif(frontPath);
+                if (form4.Length > 0)
+                {
+                    for (int i = 0; i < form4.Length; i++) SoftenOutline(form4[i]);
+                    PointF anchor4 = FindAnchor(form4[0]);
+                    anchor4X = anchor4.X;
+                    anchor4Y = anchor4.Y;
+                }
+            }
+            catch
+            {
+                form4 = null;
+            }
+        }
+        bodySpriteH = BodyHeight(sprite);
+        if (form2 != null && form2.Length > 0) body2H = BodyHeight(form2[0]);
+        if (form4 != null && form4.Length > 0) body4H = BodyHeight(form4[0]);
         ApplyMetrics();
 
         MemoryStream stream;
@@ -167,7 +210,7 @@ class PendantForm : Form
     {
         base.OnShown(e);
         Point cursor = CursorPosition();
-        float hang = cursorSize * 0.45f;
+        float hang = cursorScale * 0.45f;
         rope.SetAnchor(cursor.X + hang * 0.25f, cursor.Y + hang, true);
         rope.Reset();
         timeBeginPeriod(1);
@@ -188,6 +231,11 @@ class PendantForm : Form
         {
             for (int i = 0; i < form2.Length; i++) form2[i].Dispose();
         }
+        if (form4 != null)
+        {
+            for (int i = 0; i < form4.Length; i++) form4[i].Dispose();
+        }
+        ClearSingCache();
         base.OnFormClosed(e);
     }
 
@@ -219,9 +267,13 @@ class PendantForm : Form
         ApplyMetrics();
     }
 
-    public void SetCursorSize(float size)
+    public void SetCursorSize(float size, bool scheme)
     {
         cursorSize = size;
+        float system = SystemInformation.CursorSize.Width;
+        if (system < 8f) system = 32f;
+        cursorScale = scheme ? size : system;
+        if (cursorScale < 8f) cursorScale = system;
     }
 
     public void SetRopeColor(Color color)
@@ -236,8 +288,10 @@ class PendantForm : Form
 
     public void SetForm(int index)
     {
-        if (form2 == null || form2.Length == 0) index = 0;
-        if (index != 0) index = 1;
+        if (index == 2 && (form4 == null || form4.Length == 0)) index = 0;
+        if (index == 1 && (form2 == null || form2.Length == 0)) index = 0;
+        if (index < 0 || index > 2) index = 0;
+        if (formIndex == index) return;
         formIndex = index;
         animFrame = 0;
         animTime = 0;
@@ -246,11 +300,24 @@ class PendantForm : Form
 
     void ApplyMetrics()
     {
-        if (displayHeight < 40f) displayHeight = 40f;
-        Bitmap picture = CurrentPicture();
-        scale = displayHeight / picture.Height;
-        float ax = formIndex == 1 ? anchor2X : anchorSpriteX;
-        float ay = formIndex == 1 ? anchor2Y : anchorSpriteY;
+        if (displayHeight < 30f) displayHeight = 30f;
+        float body = bodySpriteH;
+        if (formIndex == 1) body = body2H;
+        else if (formIndex == 2) body = body4H;
+        if (body < 1f) body = 1f;
+        scale = displayHeight / body;
+        float ax = anchorSpriteX;
+        float ay = anchorSpriteY;
+        if (formIndex == 1)
+        {
+            ax = anchor2X;
+            ay = anchor2Y;
+        }
+        else if (formIndex == 2)
+        {
+            ax = anchor4X;
+            ay = anchor4Y;
+        }
         anchorX = ax * scale;
         anchorY = ay * scale;
         rope.SetLength(ropeLength);
@@ -260,12 +327,173 @@ class PendantForm : Form
     {
         if (formIndex == 1 && form2 != null && form2.Length > 0)
             return form2[animFrame];
+        if (formIndex == 2 && form4 != null && form4.Length > 0)
+            return form4[animFrame];
         return sprite;
     }
 
-    public Bitmap PreviewPicture()
+    // Height of the opaque figure rather than the transparent canvas, so a
+    // form with a taller canvas does not make the snowman look smaller.
+    static float BodyHeight(Bitmap b)
     {
-        return CurrentPicture();
+        int top = -1, bottom = -1;
+        BitmapData data = b.LockBits(new Rectangle(0, 0, b.Width, b.Height),
+            ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        byte[] row = new byte[Math.Abs(data.Stride)];
+        for (int y = 0; y < b.Height; y++)
+        {
+            Marshal.Copy(new IntPtr(data.Scan0.ToInt64() + y * data.Stride), row, 0, data.Stride);
+            for (int x = 0; x < b.Width; x++)
+            {
+                if (row[x * 4 + 3] <= 128) continue;
+                if (top < 0) top = y;
+                bottom = y;
+                break;
+            }
+        }
+        b.UnlockBits(data);
+        if (top < 0) return (float)b.Height;
+        float h = (float)(bottom - top + 1);
+        return h < 1f ? 1f : h;
+    }
+
+    // Pulls the dark cutout fringe off the white fur, and gives nearby
+    // transparent pixels the fur color so scaling does not mix in black.
+    static unsafe void SoftenOutline(Bitmap bmp)
+    {
+        int w = bmp.Width;
+        int h = bmp.Height;
+        var rect = new Rectangle(0, 0, w, h);
+        BitmapData data = bmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        try
+        {
+            byte* scan = (byte*)data.Scan0;
+            int stride = data.Stride;
+            long sx = 0, sy = 0, count = 0;
+            int left = w, top = h, right = -1, bottom = -1;
+            for (int y = 0; y < h; y++)
+            {
+                byte* row = scan + y * stride;
+                for (int x = 0; x < w; x++)
+                {
+                    if (row[x * 4 + 3] <= 200) continue;
+                    sx += x;
+                    sy += y;
+                    count++;
+                    if (x < left) left = x;
+                    if (y < top) top = y;
+                    if (x > right) right = x;
+                    if (y > bottom) bottom = y;
+                }
+            }
+            if (count < 10) return;
+            float cx = sx / (float)count;
+            float cy = sy / (float)count;
+            if (left > 5) left -= 5;
+            else left = 0;
+            if (top > 5) top -= 5;
+            else top = 0;
+            if (right < w - 6) right += 5;
+            else right = w - 1;
+            if (bottom < h - 6) bottom += 5;
+            else bottom = h - 1;
+
+            for (int pass = 0; pass < 4; pass++)
+            {
+                for (int y = top; y <= bottom; y++)
+                {
+                    byte* row = scan + y * stride;
+                    for (int x = left; x <= right; x++)
+                    {
+                        int p = x * 4;
+                        if (row[p + 3] != 0) continue;
+                        int rb = 0, gb = 0, bb = 0, found = 0;
+                        if (x > 0 && row[p - 1] > 0) { bb = row[p - 4]; gb = row[p - 3]; rb = row[p - 2]; found = 1; }
+                        else if (x + 1 < w && row[p + 7] > 0) { bb = row[p + 4]; gb = row[p + 5]; rb = row[p + 6]; found = 1; }
+                        else if (y > 0)
+                        {
+                            byte* up = row - stride;
+                            if (up[p + 3] > 0) { bb = up[p]; gb = up[p + 1]; rb = up[p + 2]; found = 1; }
+                        }
+                        if (found == 0 && y + 1 < h)
+                        {
+                            byte* down = row + stride;
+                            if (down[p + 3] > 0) { bb = down[p]; gb = down[p + 1]; rb = down[p + 2]; found = 1; }
+                        }
+                        if (found == 0) continue;
+                        row[p] = (byte)bb;
+                        row[p + 1] = (byte)gb;
+                        row[p + 2] = (byte)rb;
+                        row[p + 3] = 1;
+                    }
+                }
+            }
+
+            for (int y = top; y <= bottom; y++)
+            {
+                byte* row = scan + y * stride;
+                for (int x = left; x <= right; x++)
+                {
+                    int p = x * 4;
+                    if (row[p + 3] <= 200) continue;
+                    bool rim = false;
+                    if (x > 0 && row[p - 1] < 128) rim = true;
+                    else if (x + 1 < w && row[p + 7] < 128) rim = true;
+                    else if (y > 0 && (row - stride)[p + 3] < 128) rim = true;
+                    else if (y + 1 < h && (row + stride)[p + 3] < 128) rim = true;
+                    if (!rim) continue;
+                    int lum = (row[p] + row[p + 1] + row[p + 2]) / 3;
+                    if (lum >= 115) continue;
+                    float dx = cx - x;
+                    float dy = cy - y;
+                    float len = (float)Math.Sqrt(dx * dx + dy * dy);
+                    if (len < 1f) continue;
+                    dx /= len;
+                    dy /= len;
+                    int ib = 0, ig = 0, ir = 0, inward = 0;
+                    for (int step = 3; step <= 7; step += 2)
+                    {
+                        int xx = (int)Math.Round(x + dx * step);
+                        int yy = (int)Math.Round(y + dy * step);
+                        if ((uint)xx >= (uint)w || (uint)yy >= (uint)h) continue;
+                        byte* ip = scan + yy * stride + xx * 4;
+                        if (ip[3] <= 200) continue;
+                        int c0 = ip[0], c1 = ip[1], c2 = ip[2];
+                        int hi = c0, lo = c0;
+                        if (c1 > hi) hi = c1;
+                        if (c2 > hi) hi = c2;
+                        if (c1 < lo) lo = c1;
+                        if (c2 < lo) lo = c2;
+                        int ilum = (c0 + c1 + c2) / 3;
+                        if (ilum > 175 && hi - lo < 36)
+                        {
+                            ib = c0;
+                            ig = c1;
+                            ir = c2;
+                            inward = 1;
+                            break;
+                        }
+                    }
+                    if (inward == 0) continue;
+                    row[p] = (byte)ib;
+                    row[p + 1] = (byte)ig;
+                    row[p + 2] = (byte)ir;
+                }
+            }
+
+            for (int y = top; y <= bottom; y++)
+            {
+                byte* row = scan + y * stride;
+                for (int x = left; x <= right; x++)
+                {
+                    if (row[x * 4 + 3] == 1) row[x * 4 + 3] = 0;
+                }
+            }
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
     }
 
     static Bitmap[] LoadGif(string path)
@@ -311,6 +539,147 @@ class PendantForm : Form
         }
     }
 
+    void ClearSingCache()
+    {
+        if (singScaled != null)
+        {
+            for (int i = 0; i < singScaled.Length; i++)
+            {
+                if (singScaled[i] != null) singScaled[i].Dispose();
+            }
+        }
+        singScaled = null;
+        singScaledW = 0;
+        singScaledH = 0;
+        singReadyFrame = -1;
+        singReadyDip = -1f;
+        if (singShifted != null)
+        {
+            singShifted.Dispose();
+            singShifted = null;
+        }
+    }
+
+    // Scale each singing frame once, then slide that bitmap by a fraction of a pixel.
+    // The slide stays inside the transparent padding, so the belly edge is never resampled.
+    Bitmap SingMoved(int frame, int iw, int ih, float dip)
+    {
+        if (iw < 1) iw = 1;
+        if (ih < 1) ih = 1;
+        if (singScaled == null || singScaledW != iw || singScaledH != ih)
+        {
+            ClearSingCache();
+            singScaled = new Bitmap[form4.Length];
+            singScaledW = iw;
+            singScaledH = ih;
+        }
+        if (singScaled[frame] == null)
+        {
+            var scaled = new Bitmap(iw, ih, PixelFormat.Format32bppArgb);
+            using (var sg = Graphics.FromImage(scaled))
+            {
+                sg.Clear(Color.Transparent);
+                sg.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                sg.PixelOffsetMode = PixelOffsetMode.Half;
+                sg.CompositingMode = CompositingMode.SourceOver;
+                Bitmap raw = form4[frame];
+                sg.DrawImage(raw,
+                    new Rectangle(0, 0, iw, ih),
+                    0, 0, raw.Width, raw.Height,
+                    GraphicsUnit.Pixel);
+            }
+            singScaled[frame] = scaled;
+            singReadyFrame = -1;
+        }
+        if (singShifted == null || singShifted.Width != iw || singShifted.Height != ih)
+        {
+            if (singShifted != null) singShifted.Dispose();
+            singShifted = new Bitmap(iw, ih, PixelFormat.Format32bppArgb);
+            singReadyFrame = -1;
+        }
+        if (singReadyFrame != frame || singReadyDip != dip)
+        {
+            ShiftDown(singScaled[frame], singShifted, dip);
+            singReadyFrame = frame;
+            singReadyDip = dip;
+        }
+        return singShifted;
+    }
+
+    static unsafe void ShiftDown(Bitmap src, Bitmap dst, float dip)
+    {
+        int w = src.Width;
+        int h = src.Height;
+        if (dip < 0f) dip = 0f;
+        var rect = new Rectangle(0, 0, w, h);
+        BitmapData sd = src.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        BitmapData dd = dst.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            byte* s = (byte*)sd.Scan0;
+            byte* d = (byte*)dd.Scan0;
+            int ss = sd.Stride;
+            int ds = dd.Stride;
+            for (int y = 0; y < h; y++)
+            {
+                float sy = y - dip;
+                int y0 = (int)Math.Floor(sy);
+                float f = sy - y0;
+                float w0 = 1f - f;
+                int y1 = y0 + 1;
+                byte* dp = d + y * ds;
+                byte* r0 = ((uint)y0 < (uint)h) ? s + y0 * ss : null;
+                byte* r1 = ((uint)y1 < (uint)h) ? s + y1 * ss : null;
+                for (int x = 0; x < w; x++)
+                {
+                    int p = x * 4;
+                    int b0 = 0, g0 = 0, r = 0, a0 = 0;
+                    int b1 = 0, g1 = 0, rr = 0, a1 = 0;
+                    if (r0 != null)
+                    {
+                        b0 = r0[p];
+                        g0 = r0[p + 1];
+                        r = r0[p + 2];
+                        a0 = r0[p + 3];
+                    }
+                    if (r1 != null)
+                    {
+                        b1 = r1[p];
+                        g1 = r1[p + 1];
+                        rr = r1[p + 2];
+                        a1 = r1[p + 3];
+                    }
+                    float af = a0 * w0 + a1 * f;
+                    if (af < 0.5f)
+                    {
+                        dp[p] = 0;
+                        dp[p + 1] = 0;
+                        dp[p + 2] = 0;
+                        dp[p + 3] = 0;
+                        continue;
+                    }
+                    float inv = 1f / af;
+                    dp[p] = ClampByte((b0 * a0 * w0 + b1 * a1 * f) * inv);
+                    dp[p + 1] = ClampByte((g0 * a0 * w0 + g1 * a1 * f) * inv);
+                    dp[p + 2] = ClampByte((r * a0 * w0 + rr * a1 * f) * inv);
+                    dp[p + 3] = ClampByte(af);
+                }
+            }
+        }
+        finally
+        {
+            src.UnlockBits(sd);
+            dst.UnlockBits(dd);
+        }
+    }
+
+    static byte ClampByte(float v)
+    {
+        if (v <= 0f) return 0;
+        if (v >= 255f) return 255;
+        return (byte)(v + 0.5f);
+    }
+
     void TickCore()
     {
         long now = clock.ElapsedMilliseconds;
@@ -334,20 +703,37 @@ class PendantForm : Form
             hiddenApplied = false;
         }
 
-        if (formIndex == 1 && form2 != null && form2.Length > 1)
+        Bitmap[] anim = null;
+        if (formIndex == 1) anim = form2;
+        else if (formIndex == 2) anim = form4;
+        if (anim != null && anim.Length > 1)
         {
             animTime += elapsed;
-            while (animTime >= AnimFrameMs)
+            if (formIndex == 2)
             {
-                animTime -= AnimFrameMs;
-                animFrame++;
-                if (animFrame >= form2.Length) animFrame = 0;
+                // One frame per tick, so the faster dance still shows every frame.
+                if (animTime >= SingFrameMs)
+                {
+                    animTime -= SingFrameMs;
+                    if (animTime > SingFrameMs) animTime = SingFrameMs;
+                    animFrame++;
+                    if (animFrame >= anim.Length) animFrame = 0;
+                }
+            }
+            else
+            {
+                while (animTime >= AnimFrameMs)
+                {
+                    animTime -= AnimFrameMs;
+                    animFrame++;
+                    if (animFrame >= anim.Length) animFrame = 0;
+                }
             }
         }
 
         Point cursor = CursorPosition();
 
-        float hang = cursorSize * 0.45f;
+        float hang = cursorScale * 0.45f;
         rope.SetAnchor(cursor.X + hang * 0.25f, cursor.Y + hang, !placed);
         placed = true;
         rope.Advance(elapsed / 1000.0);
@@ -438,7 +824,27 @@ class PendantForm : Form
             g.TranslateTransform(px - winX, py - winY);
             g.RotateTransform(angle * (180f / (float)Math.PI));
             g.TranslateTransform(-anchorX, -anchorY);
-            g.DrawImage(picture, 0, 0, dw, dh);
+            if (formIndex == 2)
+            {
+                int iw = (int)Math.Round(dw);
+                int ih = (int)Math.Round(dh);
+                if (iw < 1) iw = 1;
+                if (ih < 1) ih = 1;
+                float dip = 0f;
+                if (form4 != null && form4.Length > 1)
+                {
+                    double turn = animFrame / (double)form4.Length;
+                    double wave = 0.5 - 0.5 * Math.Cos(turn * 2.0 * Math.PI);
+                    dip = (float)(wave * 18.0 * scale);
+                }
+                // Bob is inside the bitmap. A 1:1 draw keeps the belly edge from being filtered away.
+                Bitmap moved = SingMoved(animFrame, iw, ih, dip);
+                g.DrawImage(moved, new Rectangle(0, 0, iw, ih), 0, 0, iw, ih, GraphicsUnit.Pixel);
+            }
+            else
+            {
+                g.DrawImage(picture, 0, 0, dw, dh);
+            }
             g.Restore(state);
 
             Premultiply(bmp);
@@ -763,9 +1169,9 @@ class Rope
     const double RestAngleDegrees = 1;
     const double RestDelay = 0.3;
 
-    public readonly int Segments;
-    public readonly int Points;
-    public readonly double[] X, Y, OldX, OldY;
+    public int Segments;
+    public int Points;
+    public double[] X, Y, OldX, OldY;
     public float RestLen;
     public float Gravity;
     public float SegLen;
@@ -809,8 +1215,43 @@ class Rope
 
     public void SetLength(float restLen)
     {
-        if (restLen < 24f) restLen = 24f;
+        if (restLen < 1f) restLen = 1f;
         RestLen = restLen;
+        // Roughly one joint per 40 px: a 1000 px rope bends smoothly instead
+        // of becoming a handful of long straight rods.
+        int segments = (int)Math.Round(restLen / 40f) + 2;
+        if (segments < 2) segments = 2;
+        if (segments > 28) segments = 28;
+        Resize(segments);
+        SegLen = RestLen / Segments;
+        frozen = false;
+        stillSeconds = 0;
+    }
+
+    // Keep the current shape while changing the number of joints, so dragging
+    // the length slider never makes the rope snap back to a straight line.
+    public void Resize(int segments)
+    {
+        if (segments < 2) segments = 2;
+        if (segments > 28) segments = 28;
+        if (segments == Segments) return;
+        int points = segments + 1;
+        double[] nx = new double[points], ny = new double[points];
+        double[] nox = new double[points], noy = new double[points];
+        for (int i = 0; i < points; i++)
+        {
+            double pos = (double)i * Segments / segments;
+            int j = (int)pos;
+            if (j >= Segments) j = Segments - 1;
+            double f = pos - j;
+            nx[i] = X[j] + (X[j + 1] - X[j]) * f;
+            ny[i] = Y[j] + (Y[j + 1] - Y[j]) * f;
+            nox[i] = OldX[j] + (OldX[j + 1] - OldX[j]) * f;
+            noy[i] = OldY[j] + (OldY[j + 1] - OldY[j]) * f;
+        }
+        Segments = segments;
+        Points = points;
+        X = nx; Y = ny; OldX = nox; OldY = noy;
         SegLen = RestLen / Segments;
         frozen = false;
         stillSeconds = 0;
@@ -1017,8 +1458,6 @@ class SettingsForm : Form
 {
     readonly PendantForm pendant = new PendantForm();
     readonly System.Windows.Forms.Timer hotkeyTimer = new System.Windows.Forms.Timer();
-    readonly TextBox nameBox = new TextBox();
-    readonly Panel nameFrame = new Panel();
     readonly IceSlider ropeBar = new IceSlider();
     readonly IceSlider sizeBar = new IceSlider();
     readonly IceSlider cursorSizeBar = new IceSlider();
@@ -1035,10 +1474,8 @@ class SettingsForm : Form
     readonly CheckBox backgroundBox = new CheckBox();
     readonly MarkButton minButton = new MarkButton();
     readonly MarkButton closeButton = new MarkButton();
-    readonly System.Windows.Forms.Timer previewTimer = new System.Windows.Forms.Timer();
     readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
-    readonly Font headerFont = new Font("Microsoft YaHei UI", 13f, FontStyle.Regular);
-    Bitmap mark;
+    Bitmap logo;
     int hairlineY;
     int markDrawH;
     int editorX;
@@ -1079,11 +1516,11 @@ class SettingsForm : Form
         KeyPreview = true;
         string dir = Path.GetDirectoryName(Application.ExecutablePath);
         settingsPath = Path.Combine(dir, "coldy.ini");
-        string markPath = Path.Combine(dir, "assets", "coldy.png");
-        if (File.Exists(markPath))
+        string logoPath = Path.Combine(dir, "assets", "coldy-logo.png");
+        if (File.Exists(logoPath))
         {
-            try { mark = new Bitmap(markPath); }
-            catch { mark = null; }
+            try { logo = new Bitmap(logoPath); }
+            catch { logo = null; }
         }
 
         boxHeight = TextRenderer.MeasureText("选择颜色", Font).Height + 16;
@@ -1117,7 +1554,7 @@ class SettingsForm : Form
 
         int bodyH = boxHeight * 2 + 4;
         if (bodyH < 64) bodyH = 64;
-        markDrawH = bodyH * 320 / 242;
+        markDrawH = bodyH * 380 / 242;
         hairlineY = 12 + markDrawH + 12;
         int y = hairlineY + 14;
         int gap = 8;
@@ -1125,20 +1562,14 @@ class SettingsForm : Form
         int fieldW = right - editorX;
         if (fieldW > 280) fieldW = 280;
 
-        nameBox.BorderStyle = BorderStyle.None;
-        nameBox.BackColor = Field;
-        nameFrame.BorderStyle = BorderStyle.FixedSingle;
-        nameFrame.BackColor = Field;
-        nameFrame.Controls.Add(nameBox);
-        nameBox.Text = "Coldy";
-
-        SetupBar(ropeBar, 40, 320, 120);
-        SetupBar(sizeBar, 80, 420, 190);
+        SetupBar(ropeBar, 0, 1000, 120);
+        SetupBar(sizeBar, 30, 420, 190);
         SetupBar(cursorSizeBar, 16, 128, 32);
         PrepareButton(colorButton);
         colorButton.Text = "选择颜色";
         PrepareCombo(formBox);
-        formBox.Items.AddRange(new object[] { "形态 1", "形态 2" });
+        // The old form 3 is a draft only; the singing form is named cocococo.
+        formBox.Items.AddRange(new object[] { "形态 1", "形态 2", "cocococo" });
         formBox.SelectedIndex = 0;
         PrepareCombo(cursorBox);
         cursorBox.Items.AddRange(new object[] { "系统默认", "跟随场景" });
@@ -1150,8 +1581,6 @@ class SettingsForm : Form
         Controls.Add(hideButton);
 
         y = AddSection(y, "角色");
-        AddRow(y, "名字", nameFrame, fieldW, true);
-        y += boxHeight + gap;
         AddRow(y, "人物大小", sizeBar, sliderW, false);
         PlaceValue(sizeValue, y, sliderW, valueW);
         y += boxHeight + gap;
@@ -1206,11 +1635,6 @@ class SettingsForm : Form
         loading = false;
         ApplyAll(true);
 
-        nameBox.TextChanged += delegate
-        {
-            Invalidate();
-            if (!loading) ApplyAll(false);
-        };
         ropeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
         colorButton.Click += delegate { PickRopeColor(); };
         sizeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
@@ -1256,13 +1680,6 @@ class SettingsForm : Form
         hotkeyTimer.Interval = 30;
         hotkeyTimer.Tick += delegate { PollHotkey(); };
         hotkeyTimer.Start();
-        previewTimer.Interval = 100;
-        previewTimer.Tick += delegate
-        {
-            if (IsDisposed || formBox.SelectedIndex != 1) return;
-            Invalidate(new Rectangle(0, 0, ClientSize.Width, hairlineY + 1));
-        };
-        previewTimer.Start();
         updateTimer.Interval = 10 * 60 * 1000;
         updateTimer.Tick += delegate { CheckForUpdate(); };
         updateTimer.Start();
@@ -1289,6 +1706,8 @@ class SettingsForm : Form
         listener.Start();
         MatchBoxHeights();
         ApplyRound();
+        if (NotesRequested())
+            Load += delegate { BeginInvoke((MethodInvoker)ShowReleaseNotes); };
 
         pendant.Show();
     }
@@ -1309,7 +1728,6 @@ class SettingsForm : Form
         if (item < 8) item = 8;
         formBox.ItemHeight = item;
         cursorBox.ItemHeight = item;
-        CenterNameText();
         colorButton.Height = boxHeight;
         hotkeyButton.Height = boxHeight;
         hideButton.Height = boxHeight;
@@ -1317,27 +1735,12 @@ class SettingsForm : Form
         cursorBox.Height = boxHeight;
         colorSwatch.SetBounds(colorButton.Right + 8, colorButton.Top, boxHeight, boxHeight);
         hideButton.Top = hotkeyButton.Top;
-        nameFrame.Height = boxHeight;
-        CenterNameText();
-    }
-
-    void CenterNameText()
-    {
-        int innerW = nameFrame.ClientSize.Width;
-        int innerH = nameFrame.ClientSize.Height;
-        if (innerW < 8) innerW = nameFrame.Width - 2;
-        if (innerH < 8) innerH = nameFrame.Height - 2;
-        int textH = nameBox.PreferredHeight;
-        if (textH > innerH) textH = innerH;
-        int textTop = (innerH - textH) / 2;
-        if (textTop < 0) textTop = 0;
-        nameBox.SetBounds(4, textTop, innerW - 8, textH);
     }
 
     int AddSection(int y, string title)
     {
         var bar = new Panel();
-        bar.BackColor = Color.FromArgb(75, 168, 212);
+        bar.BackColor = Color.FromArgb(150, 200, 226);
         bar.SetBounds(28, y + 5, 3, 14);
         Controls.Add(bar);
         var label = new Label();
@@ -1413,6 +1816,25 @@ class SettingsForm : Form
         box.FlatStyle = FlatStyle.Flat;
         box.BackColor = Field;
         box.ForeColor = Ink;
+        box.DrawMode = DrawMode.OwnerDrawFixed;
+        box.DrawItem += DrawComboItem;
+        box.DropDownClosed += delegate { box.Invalidate(); };
+    }
+
+    static void DrawComboItem(object sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0) return;
+        ComboBox box = (ComboBox)sender;
+        bool editing = (e.State & DrawItemState.ComboBoxEdit) == DrawItemState.ComboBoxEdit;
+        bool hot = !editing && (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+        Color back = hot ? SystemColors.Highlight : Field;
+        Color fore = hot ? Color.White : Ink;
+        using (SolidBrush brush = new SolidBrush(back))
+            e.Graphics.FillRectangle(brush, e.Bounds);
+        string text = Convert.ToString(box.Items[e.Index]);
+        Rectangle textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
+        TextRenderer.DrawText(e.Graphics, text, e.Font, textBounds, fore,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
     }
 
     void SetupBar(IceSlider bar, int min, int max, int value)
@@ -1482,15 +1904,13 @@ class SettingsForm : Form
     void ApplyAll(bool cursor)
     {
         RefreshNumbers();
-        string name = nameBox.Text.Trim();
-        if (name.Length == 0) name = "Coldy";
-        Text = name;
-        pendant.SetName(name);
+        Text = "Coldy";
+        pendant.SetName("Coldy");
         pendant.SetRopeLength(ropeBar.Value);
         pendant.SetRopeColor(ropeColor);
         pendant.SetDisplayHeight(sizeBar.Value);
         pendant.SetForm(formBox.SelectedIndex);
-        pendant.SetCursorSize(cursorSizeBar.Value);
+        pendant.SetCursorSize(cursorSizeBar.Value, cursorBox.SelectedIndex == 1);
         if (cursor) ApplyCursor();
         SaveSettings();
     }
@@ -1660,13 +2080,6 @@ class SettingsForm : Form
         ApplyRound();
     }
 
-    protected override void OnShown(EventArgs e)
-    {
-        base.OnShown(e);
-        nameBox.SelectionStart = nameBox.Text.Length;
-        nameBox.SelectionLength = 0;
-    }
-
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
@@ -1676,41 +2089,23 @@ class SettingsForm : Form
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        string title = nameBox.Text.Trim();
-        if (title.Length == 0) title = "Coldy";
-        Bitmap frame = mark;
-        if (formBox.SelectedIndex == 1 && pendant != null && !pendant.IsDisposed)
-        {
-            Bitmap live = pendant.PreviewPicture();
-            if (live != null) frame = live;
-        }
         int top = 12;
-        float unit = markDrawH / 320f;
-        int textX = 28 + (int)Math.Round(340f * unit) + 16;
-        if (frame != null && frame.Height > 0 && markDrawH > 0 && unit > 0f)
+        // Top-left corner: just the wordmark, no live character preview.
+        if (logo != null && logo.Width > 0 && logo.Height > 0)
         {
-            Rectangle dest;
-            if (frame == mark)
+            int maxW = minButton.Left - 12 - 28;
+            if (maxW < 40) maxW = 40;
+            float ls = Math.Min((float)maxW / logo.Width, (float)markDrawH / logo.Height);
+            int lw = (int)Math.Round(logo.Width * ls);
+            int lh = (int)Math.Round(logo.Height * ls);
+            if (lw > 0 && lh > 0)
             {
-                int pngW = (int)Math.Round(256f * unit);
-                int pngH = (int)Math.Round(242f * unit);
-                int pngX = 28 + (int)Math.Round((160f - 134.1f) * unit);
-                int pngY = top + (int)Math.Round((78f - 50.1f) * unit);
-                dest = new Rectangle(pngX, pngY, pngW, pngH);
+                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                e.Graphics.DrawImage(logo,
+                    new Rectangle(28, top + (markDrawH - lh) / 2, lw, lh));
             }
-            else
-            {
-                dest = new Rectangle(28, top, (int)Math.Round(340f * unit), markDrawH);
-            }
-            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            e.Graphics.DrawImage(frame, dest);
         }
-        int textRight = minButton.Left - 12;
-        if (textRight < textX + 40) textRight = ClientSize.Width - 24;
-        var rect = new Rectangle(textX, top, textRight - textX, markDrawH);
-        TextRenderer.DrawText(e.Graphics, title, headerFont, rect, Ink,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         using (var pen = new Pen(Line))
             e.Graphics.DrawLine(pen, 28, hairlineY, ClientSize.Width - 28, hairlineY);
     }
@@ -1833,6 +2228,126 @@ class SettingsForm : Form
             if (args[i] == "--tray") return true;
         }
         return false;
+    }
+
+    static bool NotesRequested()
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i] == "--notes") return true;
+        }
+        return false;
+    }
+
+    void ShowReleaseNotes()
+    {
+        using (Form dialog = new Form())
+        {
+            dialog.FormBorderStyle = FormBorderStyle.None;
+            dialog.ShowInTaskbar = false;
+            dialog.StartPosition = FormStartPosition.Manual;
+            dialog.AutoScaleMode = AutoScaleMode.None;
+            dialog.Font = new Font("Microsoft YaHei UI", 9f);
+            dialog.BackColor = Color.White;
+            dialog.TopMost = true;
+            string notes = "v1.6.0 更新\r\n\r\n"
+                + "绳子长度的范围加长到 0–1000。\r\n"
+                + "添加了新的形态。\r\n"
+                + "人物大小只留一个滑块，三个形态的显示高度一致。\r\n"
+                + "修复了系统光标和跟随场景光标绳子挂点不一致的问题。\r\n"
+                + "修复了切换形态后下拉框一直保持蓝色的问题。\r\n"
+                + "名字固定为 Coldy，左上角为 Coldy 的 logo。";
+            string[] lines = notes.Split('\n');
+            Size measured;
+            int lineH;
+            using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
+            {
+                float maxW = 0;
+                lineH = (int)Math.Ceiling(dialog.Font.GetHeight(g));
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i].TrimEnd('\r');
+                    if (line.Length == 0) line = " ";
+                    SizeF size = g.MeasureString(line, dialog.Font);
+                    if (size.Width > maxW) maxW = size.Width;
+                }
+                measured = new Size((int)Math.Ceiling(maxW), lineH * lines.Length);
+            }
+
+            Color bar = Color.FromArgb(240, 240, 240);
+            int titleH = lineH + 8;
+            int buttonH = lineH + 12;
+            int footerH = buttonH + 6;
+            int iconSize = 24;
+            int textX = 12 + iconSize + 10;
+            int clientW = textX + measured.Width + 18;
+            int bodyH = measured.Height + 16;
+            if (bodyH < iconSize + 16) bodyH = iconSize + 16;
+
+            var title = new Panel();
+            title.BackColor = bar;
+            title.SetBounds(0, 0, clientW, titleH);
+            var caption = new Label();
+            caption.Text = "Coldy";
+            caption.BackColor = bar;
+            caption.ForeColor = Color.Black;
+            caption.AutoSize = false;
+            caption.TextAlign = ContentAlignment.MiddleLeft;
+            caption.SetBounds(8, 0, 80, titleH);
+            title.Controls.Add(caption);
+            var close = new Button();
+            close.Text = "×";
+            close.FlatStyle = FlatStyle.Flat;
+            close.FlatAppearance.BorderSize = 0;
+            close.BackColor = bar;
+            close.ForeColor = Color.Black;
+            close.TabStop = false;
+            close.SetBounds(clientW - titleH, 0, titleH, titleH);
+            close.DialogResult = DialogResult.OK;
+            title.Controls.Add(close);
+
+            var icon = new PictureBox();
+            icon.Image = SystemIcons.Information.ToBitmap();
+            icon.SizeMode = PictureBoxSizeMode.Zoom;
+            icon.BackColor = Color.White;
+            icon.SetBounds(12, titleH + 8, iconSize, iconSize);
+
+            var text = new Label();
+            text.BackColor = Color.White;
+            text.ForeColor = Color.Black;
+            text.AutoSize = false;
+            text.UseCompatibleTextRendering = true;
+            text.Text = notes;
+            text.SetBounds(textX, titleH + 6, measured.Width + 2, measured.Height);
+
+            var footer = new Panel();
+            footer.BackColor = bar;
+            footer.SetBounds(0, titleH + bodyH, clientW, footerH);
+            var button = new Button();
+            button.Text = "确定";
+            button.SetBounds(clientW - 8 - 72, (footerH - buttonH) / 2, 72, buttonH);
+            button.DialogResult = DialogResult.OK;
+            footer.Controls.Add(button);
+
+            dialog.ClientSize = new Size(clientW, titleH + bodyH + footerH);
+            dialog.Controls.Add(icon);
+            dialog.Controls.Add(text);
+            dialog.Controls.Add(title);
+            dialog.Controls.Add(footer);
+            dialog.AcceptButton = button;
+            dialog.CancelButton = close;
+            dialog.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                using (Pen pen = new Pen(Color.FromArgb(196, 196, 196)))
+                    e.Graphics.DrawRectangle(pen, 0, 0, dialog.ClientSize.Width - 1, dialog.ClientSize.Height - 1);
+            };
+            Rectangle area = Screen.PrimaryScreen.WorkingArea;
+            dialog.Location = new Point(
+                area.Left + (area.Width - dialog.Width) / 2,
+                area.Top + (area.Height - dialog.Height) / 2);
+            dialog.ShowDialog();
+        }
     }
 
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -1959,7 +2474,7 @@ class SettingsForm : Form
             + "goto wait\r\n"
             + ")\r\n"
             + "xcopy /e /y /i \"" + unpacked + "\\*\" \"" + dest + "\\\" >nul\r\n"
-            + "start \"\" \"" + exe + "\"\r\n"
+            + "start \"\" \"" + exe + "\" --notes\r\n"
             + "del \"%~f0\"\r\n";
         File.WriteAllText(bat, script, Encoding.Default);
         var start = new ProcessStartInfo();
@@ -1982,12 +2497,11 @@ class SettingsForm : Form
         }
         exitRequested = true;
         hotkeyTimer.Stop();
-        previewTimer.Stop();
         updateTimer.Stop();
         if (cursorApplied) CursorFactory.Restore();
         SaveSettings();
-        if (mark != null) mark.Dispose();
-        mark = null;
+        if (logo != null) logo.Dispose();
+        logo = null;
         Icon = null;
         if (pendant != null && !pendant.IsDisposed) pendant.Close();
         base.OnFormClosing(e);
@@ -2010,8 +2524,7 @@ class SettingsForm : Form
             string key = lines[i].Substring(0, eq).Trim();
             string val = lines[i].Substring(eq + 1).Trim();
             int n;
-            if (key == "name") nameBox.Text = val;
-            else if (key == "rope") SetBar(ropeBar, val);
+            if (key == "rope") SetBar(ropeBar, val);
             else if (key == "ropeColor") ropeColor = ParseColor(val);
             else if (key == "size") SetBar(sizeBar, val);
             else if (key == "cursorSize") SetBar(cursorSizeBar, val);
@@ -2087,7 +2600,17 @@ class SettingsForm : Form
 
     void SelectForm(string val)
     {
-        formBox.SelectedIndex = (val == "2" || val == "gif") ? 1 : 0;
+        // "4" is the old key for the singing form, kept for existing configs.
+        if (val == "3" || val == "4") formBox.SelectedIndex = 2;
+        else if (val == "2" || val == "gif") formBox.SelectedIndex = 1;
+        else formBox.SelectedIndex = 0;
+    }
+
+    static string FormKey(int index)
+    {
+        if (index == 2) return "3";
+        if (index == 1) return "2";
+        return "1";
     }
 
     void SaveSettings()
@@ -2096,13 +2619,10 @@ class SettingsForm : Form
         string[] styles = { "system", "scheme" };
         int index = cursorBox.SelectedIndex;
         if (index < 0 || index >= styles.Length) index = 0;
-        string name = nameBox.Text.Trim();
-        if (name.Length == 0) name = "Coldy";
-        string text = "name=" + name + "\r\n"
-            + "rope=" + ropeBar.Value + "\r\n"
+        string text = "rope=" + ropeBar.Value + "\r\n"
             + "ropeColor=" + ropeColor.R + "," + ropeColor.G + "," + ropeColor.B + "\r\n"
             + "size=" + sizeBar.Value + "\r\n"
-            + "form=" + (formBox.SelectedIndex == 1 ? "2" : "1") + "\r\n"
+            + "form=" + FormKey(formBox.SelectedIndex) + "\r\n"
             + "cursor=" + styles[index] + "\r\n"
             + "cursorSize=" + cursorSizeBar.Value + "\r\n"
             + "hotkey=" + hotkeyButton.Text + "\r\n"
