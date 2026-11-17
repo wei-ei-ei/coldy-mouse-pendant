@@ -1812,30 +1812,16 @@ class SettingsForm : Form
 
     static void PrepareCombo(ComboBox box)
     {
-        box.IntegralHeight = false;
+        box.IntegralHeight = true;
         box.DropDownStyle = ComboBoxStyle.DropDownList;
         box.FlatStyle = FlatStyle.Flat;
         box.BackColor = Field;
         box.ForeColor = Ink;
-        box.DrawMode = DrawMode.OwnerDrawFixed;
-        box.DrawItem += DrawComboItem;
-        box.DropDownClosed += delegate { box.Invalidate(); };
-    }
-
-    static void DrawComboItem(object sender, DrawItemEventArgs e)
-    {
-        if (e.Index < 0) return;
-        ComboBox box = (ComboBox)sender;
-        bool editing = (e.State & DrawItemState.ComboBoxEdit) == DrawItemState.ComboBoxEdit;
-        bool hot = !editing && (e.State & DrawItemState.Selected) == DrawItemState.Selected;
-        Color back = hot ? SystemColors.Highlight : Field;
-        Color fore = hot ? Color.White : Ink;
-        using (SolidBrush brush = new SolidBrush(back))
-            e.Graphics.FillRectangle(brush, e.Bounds);
-        string text = Convert.ToString(box.Items[e.Index]);
-        Rectangle textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
-        TextRenderer.DrawText(e.Graphics, text, e.Font, textBounds, fore,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        box.DropDownClosed += delegate
+        {
+            Control parent = box.Parent;
+            if (parent != null) parent.SelectNextControl(box, true, true, true, true);
+        };
     }
 
     void SetupBar(IceSlider bar, int min, int max, int value)
