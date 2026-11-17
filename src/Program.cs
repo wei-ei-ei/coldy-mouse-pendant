@@ -2464,6 +2464,7 @@ class SettingsForm : Form
     {
         string exe = Application.ExecutablePath;
         string dest = Path.GetDirectoryName(exe);
+        if (dest.EndsWith("\\")) dest = dest.Substring(0, dest.Length - 1);
         int pid = Process.GetCurrentProcess().Id;
         string bat = Path.Combine(Path.GetTempPath(), "coldy-update.cmd");
         string script = "@echo off\r\n"
@@ -2473,7 +2474,7 @@ class SettingsForm : Form
             + "ping -n 2 127.0.0.1 >nul\r\n"
             + "goto wait\r\n"
             + ")\r\n"
-            + "xcopy /e /y /i \"" + unpacked + "\\*\" \"" + dest + "\\\" >nul\r\n"
+            + "xcopy /e /y /i \"" + unpacked + "\\*\" \"" + dest + "\" >nul\r\n"
             + "start \"\" \"" + exe + "\" --notes\r\n"
             + "del \"%~f0\"\r\n";
         File.WriteAllText(bat, script, Encoding.Default);
