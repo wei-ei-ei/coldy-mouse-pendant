@@ -1489,6 +1489,7 @@ class SettingsForm : Form
     bool capturingHotkey;
     bool chordDown;
     bool loading = true;
+    bool releaseNotesSeen;
     bool cursorApplied;
     bool exitRequested;
     bool startHidden;
@@ -1706,7 +1707,7 @@ class SettingsForm : Form
         listener.Start();
         MatchBoxHeights();
         ApplyRound();
-        if (NotesRequested())
+        if (NotesRequested() || !releaseNotesSeen)
             Load += delegate { BeginInvoke((MethodInvoker)ShowReleaseNotes); };
 
         pendant.Show();
@@ -2347,6 +2348,8 @@ class SettingsForm : Form
                 area.Left + (area.Width - dialog.Width) / 2,
                 area.Top + (area.Height - dialog.Height) / 2);
             dialog.ShowDialog();
+            releaseNotesSeen = true;
+            SaveSettings();
         }
     }
 
@@ -2532,6 +2535,7 @@ class SettingsForm : Form
             else if (key == "cursor") SelectCursor(val);
             else if (key == "form") SelectForm(val);
             else if (key == "background") backgroundBox.Checked = val == "1";
+            else if (key == "notes") releaseNotesSeen = val == Program.AppVersion;
             else if (key == "hotkeyVk")
             {
                 if (int.TryParse(val, out n) && n > 0) { fileVk = n; sawVk = true; }
@@ -2630,7 +2634,8 @@ class SettingsForm : Form
             + "hotkeyVk=" + hotkeyVk + "\r\n"
             + "hotkeyVk2=" + hotkeyVk2 + "\r\n"
             + "startup=" + (startupBox.Checked ? "1" : "0") + "\r\n"
-            + "background=" + (backgroundBox.Checked ? "1" : "0") + "\r\n";
+            + "background=" + (backgroundBox.Checked ? "1" : "0") + "\r\n"
+            + "notes=" + (releaseNotesSeen ? Program.AppVersion : "") + "\r\n";
         try { File.WriteAllText(settingsPath, text); }
         catch { }
     }
