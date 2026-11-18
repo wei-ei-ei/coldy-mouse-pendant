@@ -1,4 +1,8 @@
 <p align="center">
+  <b>中文</b> · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
   <br>
   <img src="assets/coldy-logo.png" alt="COLDY" width="320"/>
   <br>
@@ -177,7 +181,7 @@
 在仓库根目录构建：
 
 ```bat
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /platform:anycpu /win32manifest:src\app.manifest /win32icon:assets\coldy.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /out:Coldy.exe src\Program.cs
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /unsafe /target:winexe /platform:anycpu /win32manifest:src\app.manifest /win32icon:assets\coldy.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /out:Coldy.exe src\Program.cs
 copy /Y src\app.config Coldy.exe.config
 ```
 
