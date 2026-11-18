@@ -1,21 +1,46 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.IO.Compression;
+using System.Net;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 // Coldy hangs from the cursor on a rope that can bend.
-// The control window sets the name, rope length, size, cursor, and hide key.
+// The control window sets the name, rope length, size, form, cursor, and hide key.
 // The pendant itself is a transparent, topmost, click-through layered window.
 class Program
 {
+    public const string AppVersion = "1.6.1";
+    static EventWaitHandle showEvent;
+
     [STAThread]
     static void Main()
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        bool createdNew;
+        using (new Mutex(true, @"Local\Coldy.MousePendant", out createdNew))
+        {
+            if (!createdNew)
+            {
+                try { EventWaitHandle.OpenExisting(@"Local\Coldy.MousePendant.Show").Set(); }
+                catch { }
+                return;
+            }
+            showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Coldy.MousePendant.Show");
+            RunApp();
+        }
+    }
+
+    static void RunApp()
+    {
         try
         {
             Application.Run(new SettingsForm());
@@ -31,6 +56,11 @@ class Program
             MessageBox.Show(ex.Message, "Coldy");
         }
     }
+
+    public static void WaitForShow()
+    {
+        if (showEvent != null) showEvent.WaitOne();
+    }
 }
 
 class PendantForm : Form
@@ -41,6 +71,30 @@ class PendantForm : Form
     readonly Bitmap sprite;
     readonly float anchorSpriteX;
     readonly float anchorSpriteY;
+    Bitmap[] form2;
+    float anchor2X;
+    float anchor2Y;
+    Bitmap[] form4;
+    float anchor4X;
+    float anchor4Y;
+    // Every form is scaled by its own opaque height, so the "人物大小"
+    // slider produces exactly the same on-screen snowman height everywhere.
+    float bodySpriteH = 1f;
+    float body2H = 1f;
+    float body4H = 1f;
+    int formIndex;
+    int animFrame;
+    double animTime;
+    const int AnimFrameMs = 100;
+    // One bounce in about three quarters of a second, close to the recorded dance.
+    const int SingFrameMs = 8;
+    // Scaled singing frames, shifted inside the bitmap so the bob never resamples the edge.
+    Bitmap[] singScaled;
+    int singScaledW;
+    int singScaledH;
+    Bitmap singShifted;
+    int singReadyFrame = -1;
+    float singReadyDip = -1f;
     readonly Rope rope = new Rope(RopeSegments, 120f, Gravity);
     float scale;
     float anchorX;
@@ -48,11 +102,25 @@ class PendantForm : Form
     float ropeLength = 120f;
     float displayHeight = 190f;
     float cursorSize = 32f;
+    // Hang offset uses the pointer size that is actually in effect. In system
+    // cursor mode that is the system cursor, not the (possibly huge) scheme size.
+    float cursorScale = 32f;
+    Color ropeColor = Color.FromArgb(230, 55, 55, 62);
     bool hidden;
     bool hiddenApplied;
-    readonly Timer timer = new Timer();
+    readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
     readonly NotifyIcon tray = new NotifyIcon();
     bool placed;
+    bool ticking;
+    bool hasLast;
+    int lastX;
+    int lastY;
+    int lastW;
+    int lastH;
+    readonly Stopwatch clock = Stopwatch.StartNew();
+    long lastClock;
+    Icon appIcon;
+    MemoryStream iconStream;
 
     public PendantForm()
     {
@@ -69,14 +137,58 @@ class PendantForm : Form
         PointF anchor = FindAnchor(sprite);
         anchorSpriteX = anchor.X;
         anchorSpriteY = anchor.Y;
+        string gifPath = Path.Combine(dir, "assets", "coldy-form2.gif");
+        if (File.Exists(gifPath))
+        {
+            try
+            {
+                form2 = LoadGif(gifPath);
+                if (form2.Length > 0)
+                {
+                    PointF anchor2 = FindAnchor(form2[0]);
+                    anchor2X = anchor2.X;
+                    anchor2Y = anchor2.Y;
+                }
+            }
+            catch
+            {
+                form2 = null;
+            }
+        }
+        // Form 3 is kept in the repository as a draft but is no longer loaded.
+        string frontPath = Path.Combine(dir, "assets", "coldy-form4.gif");
+        if (File.Exists(frontPath))
+        {
+            try
+            {
+                form4 = LoadGif(frontPath);
+                if (form4.Length > 0)
+                {
+                    for (int i = 0; i < form4.Length; i++) SoftenOutline(form4[i]);
+                    PointF anchor4 = FindAnchor(form4[0]);
+                    anchor4X = anchor4.X;
+                    anchor4Y = anchor4.Y;
+                }
+            }
+            catch
+            {
+                form4 = null;
+            }
+        }
+        bodySpriteH = BodyHeight(sprite);
+        if (form2 != null && form2.Length > 0) body2H = BodyHeight(form2[0]);
+        if (form4 != null && form4.Length > 0) body4H = BodyHeight(form4[0]);
         ApplyMetrics();
 
-        tray.Icon = Icon.FromHandle(sprite.GetHicon());
+        MemoryStream stream;
+        appIcon = MakeColdyIcon(sprite, out stream);
+        iconStream = stream;
+        tray.Icon = appIcon;
         tray.Text = "Coldy";
         tray.Visible = true;
         tray.ContextMenu = new ContextMenu();
 
-        timer.Interval = 16;
+        timer.Interval = 8;
         timer.Tick += delegate { Tick(); };
     }
 
@@ -98,24 +210,43 @@ class PendantForm : Form
     {
         base.OnShown(e);
         Point cursor = CursorPosition();
-        float hang = cursorSize * 0.45f;
+        float hang = cursorScale * 0.45f;
         rope.SetAnchor(cursor.X + hang * 0.25f, cursor.Y + hang, true);
         rope.Reset();
+        timeBeginPeriod(1);
+        lastClock = clock.ElapsedMilliseconds;
         timer.Start();
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         timer.Stop();
+        timeEndPeriod(1);
         tray.Visible = false;
         tray.Dispose();
+        if (appIcon != null) appIcon.Dispose();
+        if (iconStream != null) iconStream.Dispose();
         sprite.Dispose();
+        if (form2 != null)
+        {
+            for (int i = 0; i < form2.Length; i++) form2[i].Dispose();
+        }
+        if (form4 != null)
+        {
+            for (int i = 0; i < form4.Length; i++) form4[i].Dispose();
+        }
+        ClearSingCache();
         base.OnFormClosed(e);
     }
 
     public NotifyIcon TrayIcon
     {
         get { return tray; }
+    }
+
+    public Icon AppIcon
+    {
+        get { return appIcon; }
     }
 
     public void SetName(string name)
@@ -136,9 +267,18 @@ class PendantForm : Form
         ApplyMetrics();
     }
 
-    public void SetCursorSize(float size)
+    public void SetCursorSize(float size, bool scheme)
     {
         cursorSize = size;
+        float system = SystemInformation.CursorSize.Width;
+        if (system < 8f) system = 32f;
+        cursorScale = scheme ? size : system;
+        if (cursorScale < 8f) cursorScale = system;
+    }
+
+    public void SetRopeColor(Color color)
+    {
+        ropeColor = Color.FromArgb(230, color.R, color.G, color.B);
     }
 
     public void SetHidden(bool value)
@@ -146,17 +286,408 @@ class PendantForm : Form
         hidden = value;
     }
 
+    public void SetForm(int index)
+    {
+        if (index == 2 && (form4 == null || form4.Length == 0)) index = 0;
+        if (index == 1 && (form2 == null || form2.Length == 0)) index = 0;
+        if (index < 0 || index > 2) index = 0;
+        if (formIndex == index) return;
+        formIndex = index;
+        animFrame = 0;
+        animTime = 0;
+        ApplyMetrics();
+    }
+
     void ApplyMetrics()
     {
-        if (displayHeight < 40f) displayHeight = 40f;
-        scale = displayHeight / sprite.Height;
-        anchorX = anchorSpriteX * scale;
-        anchorY = anchorSpriteY * scale;
+        if (displayHeight < 30f) displayHeight = 30f;
+        float body = bodySpriteH;
+        if (formIndex == 1) body = body2H;
+        else if (formIndex == 2) body = body4H;
+        if (body < 1f) body = 1f;
+        scale = displayHeight / body;
+        float ax = anchorSpriteX;
+        float ay = anchorSpriteY;
+        if (formIndex == 1)
+        {
+            ax = anchor2X;
+            ay = anchor2Y;
+        }
+        else if (formIndex == 2)
+        {
+            ax = anchor4X;
+            ay = anchor4Y;
+        }
+        anchorX = ax * scale;
+        anchorY = ay * scale;
         rope.SetLength(ropeLength);
+    }
+
+    Bitmap CurrentPicture()
+    {
+        if (formIndex == 1 && form2 != null && form2.Length > 0)
+            return form2[animFrame];
+        if (formIndex == 2 && form4 != null && form4.Length > 0)
+            return form4[animFrame];
+        return sprite;
+    }
+
+    // Height of the opaque figure rather than the transparent canvas, so a
+    // form with a taller canvas does not make the snowman look smaller.
+    static float BodyHeight(Bitmap b)
+    {
+        int top = -1, bottom = -1;
+        BitmapData data = b.LockBits(new Rectangle(0, 0, b.Width, b.Height),
+            ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        byte[] row = new byte[Math.Abs(data.Stride)];
+        for (int y = 0; y < b.Height; y++)
+        {
+            Marshal.Copy(new IntPtr(data.Scan0.ToInt64() + y * data.Stride), row, 0, data.Stride);
+            for (int x = 0; x < b.Width; x++)
+            {
+                if (row[x * 4 + 3] <= 128) continue;
+                if (top < 0) top = y;
+                bottom = y;
+                break;
+            }
+        }
+        b.UnlockBits(data);
+        if (top < 0) return (float)b.Height;
+        float h = (float)(bottom - top + 1);
+        return h < 1f ? 1f : h;
+    }
+
+    // Pulls the dark cutout fringe off the white fur, and gives nearby
+    // transparent pixels the fur color so scaling does not mix in black.
+    static unsafe void SoftenOutline(Bitmap bmp)
+    {
+        int w = bmp.Width;
+        int h = bmp.Height;
+        var rect = new Rectangle(0, 0, w, h);
+        BitmapData data = bmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        try
+        {
+            byte* scan = (byte*)data.Scan0;
+            int stride = data.Stride;
+            long sx = 0, sy = 0, count = 0;
+            int left = w, top = h, right = -1, bottom = -1;
+            for (int y = 0; y < h; y++)
+            {
+                byte* row = scan + y * stride;
+                for (int x = 0; x < w; x++)
+                {
+                    if (row[x * 4 + 3] <= 200) continue;
+                    sx += x;
+                    sy += y;
+                    count++;
+                    if (x < left) left = x;
+                    if (y < top) top = y;
+                    if (x > right) right = x;
+                    if (y > bottom) bottom = y;
+                }
+            }
+            if (count < 10) return;
+            float cx = sx / (float)count;
+            float cy = sy / (float)count;
+            if (left > 5) left -= 5;
+            else left = 0;
+            if (top > 5) top -= 5;
+            else top = 0;
+            if (right < w - 6) right += 5;
+            else right = w - 1;
+            if (bottom < h - 6) bottom += 5;
+            else bottom = h - 1;
+
+            for (int pass = 0; pass < 4; pass++)
+            {
+                for (int y = top; y <= bottom; y++)
+                {
+                    byte* row = scan + y * stride;
+                    for (int x = left; x <= right; x++)
+                    {
+                        int p = x * 4;
+                        if (row[p + 3] != 0) continue;
+                        int rb = 0, gb = 0, bb = 0, found = 0;
+                        if (x > 0 && row[p - 1] > 0) { bb = row[p - 4]; gb = row[p - 3]; rb = row[p - 2]; found = 1; }
+                        else if (x + 1 < w && row[p + 7] > 0) { bb = row[p + 4]; gb = row[p + 5]; rb = row[p + 6]; found = 1; }
+                        else if (y > 0)
+                        {
+                            byte* up = row - stride;
+                            if (up[p + 3] > 0) { bb = up[p]; gb = up[p + 1]; rb = up[p + 2]; found = 1; }
+                        }
+                        if (found == 0 && y + 1 < h)
+                        {
+                            byte* down = row + stride;
+                            if (down[p + 3] > 0) { bb = down[p]; gb = down[p + 1]; rb = down[p + 2]; found = 1; }
+                        }
+                        if (found == 0) continue;
+                        row[p] = (byte)bb;
+                        row[p + 1] = (byte)gb;
+                        row[p + 2] = (byte)rb;
+                        row[p + 3] = 1;
+                    }
+                }
+            }
+
+            for (int y = top; y <= bottom; y++)
+            {
+                byte* row = scan + y * stride;
+                for (int x = left; x <= right; x++)
+                {
+                    int p = x * 4;
+                    if (row[p + 3] <= 200) continue;
+                    bool rim = false;
+                    if (x > 0 && row[p - 1] < 128) rim = true;
+                    else if (x + 1 < w && row[p + 7] < 128) rim = true;
+                    else if (y > 0 && (row - stride)[p + 3] < 128) rim = true;
+                    else if (y + 1 < h && (row + stride)[p + 3] < 128) rim = true;
+                    if (!rim) continue;
+                    int lum = (row[p] + row[p + 1] + row[p + 2]) / 3;
+                    if (lum >= 115) continue;
+                    float dx = cx - x;
+                    float dy = cy - y;
+                    float len = (float)Math.Sqrt(dx * dx + dy * dy);
+                    if (len < 1f) continue;
+                    dx /= len;
+                    dy /= len;
+                    int ib = 0, ig = 0, ir = 0, inward = 0;
+                    for (int step = 3; step <= 7; step += 2)
+                    {
+                        int xx = (int)Math.Round(x + dx * step);
+                        int yy = (int)Math.Round(y + dy * step);
+                        if ((uint)xx >= (uint)w || (uint)yy >= (uint)h) continue;
+                        byte* ip = scan + yy * stride + xx * 4;
+                        if (ip[3] <= 200) continue;
+                        int c0 = ip[0], c1 = ip[1], c2 = ip[2];
+                        int hi = c0, lo = c0;
+                        if (c1 > hi) hi = c1;
+                        if (c2 > hi) hi = c2;
+                        if (c1 < lo) lo = c1;
+                        if (c2 < lo) lo = c2;
+                        int ilum = (c0 + c1 + c2) / 3;
+                        if (ilum > 175 && hi - lo < 36)
+                        {
+                            ib = c0;
+                            ig = c1;
+                            ir = c2;
+                            inward = 1;
+                            break;
+                        }
+                    }
+                    if (inward == 0) continue;
+                    row[p] = (byte)ib;
+                    row[p + 1] = (byte)ig;
+                    row[p + 2] = (byte)ir;
+                }
+            }
+
+            for (int y = top; y <= bottom; y++)
+            {
+                byte* row = scan + y * stride;
+                for (int x = left; x <= right; x++)
+                {
+                    if (row[x * 4 + 3] == 1) row[x * 4 + 3] = 0;
+                }
+            }
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
+    }
+
+    static Bitmap[] LoadGif(string path)
+    {
+        using (Image img = Image.FromFile(path))
+        {
+            var dim = new FrameDimension(img.FrameDimensionsList[0]);
+            int count = img.GetFrameCount(dim);
+            var frames = new Bitmap[count];
+            using (var attr = new ImageAttributes())
+            {
+                attr.SetColorKey(Color.Magenta, Color.Magenta);
+                for (int i = 0; i < count; i++)
+                {
+                    img.SelectActiveFrame(dim, i);
+                    var frame = new Bitmap(img.Width, img.Height, PixelFormat.Format32bppArgb);
+                    using (var g = Graphics.FromImage(frame))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.DrawImage(img,
+                            new Rectangle(0, 0, img.Width, img.Height),
+                            0, 0, img.Width, img.Height,
+                            GraphicsUnit.Pixel, attr);
+                    }
+                    frames[i] = frame;
+                }
+            }
+            return frames;
+        }
     }
 
     void Tick()
     {
+        if (ticking) return;
+        ticking = true;
+        try
+        {
+            TickCore();
+        }
+        finally
+        {
+            ticking = false;
+        }
+    }
+
+    void ClearSingCache()
+    {
+        if (singScaled != null)
+        {
+            for (int i = 0; i < singScaled.Length; i++)
+            {
+                if (singScaled[i] != null) singScaled[i].Dispose();
+            }
+        }
+        singScaled = null;
+        singScaledW = 0;
+        singScaledH = 0;
+        singReadyFrame = -1;
+        singReadyDip = -1f;
+        if (singShifted != null)
+        {
+            singShifted.Dispose();
+            singShifted = null;
+        }
+    }
+
+    // Scale each singing frame once, then slide that bitmap by a fraction of a pixel.
+    // The slide stays inside the transparent padding, so the belly edge is never resampled.
+    Bitmap SingMoved(int frame, int iw, int ih, float dip)
+    {
+        if (iw < 1) iw = 1;
+        if (ih < 1) ih = 1;
+        if (singScaled == null || singScaledW != iw || singScaledH != ih)
+        {
+            ClearSingCache();
+            singScaled = new Bitmap[form4.Length];
+            singScaledW = iw;
+            singScaledH = ih;
+        }
+        if (singScaled[frame] == null)
+        {
+            var scaled = new Bitmap(iw, ih, PixelFormat.Format32bppArgb);
+            using (var sg = Graphics.FromImage(scaled))
+            {
+                sg.Clear(Color.Transparent);
+                sg.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                sg.PixelOffsetMode = PixelOffsetMode.Half;
+                sg.CompositingMode = CompositingMode.SourceOver;
+                Bitmap raw = form4[frame];
+                sg.DrawImage(raw,
+                    new Rectangle(0, 0, iw, ih),
+                    0, 0, raw.Width, raw.Height,
+                    GraphicsUnit.Pixel);
+            }
+            singScaled[frame] = scaled;
+            singReadyFrame = -1;
+        }
+        if (singShifted == null || singShifted.Width != iw || singShifted.Height != ih)
+        {
+            if (singShifted != null) singShifted.Dispose();
+            singShifted = new Bitmap(iw, ih, PixelFormat.Format32bppArgb);
+            singReadyFrame = -1;
+        }
+        if (singReadyFrame != frame || singReadyDip != dip)
+        {
+            ShiftDown(singScaled[frame], singShifted, dip);
+            singReadyFrame = frame;
+            singReadyDip = dip;
+        }
+        return singShifted;
+    }
+
+    static unsafe void ShiftDown(Bitmap src, Bitmap dst, float dip)
+    {
+        int w = src.Width;
+        int h = src.Height;
+        if (dip < 0f) dip = 0f;
+        var rect = new Rectangle(0, 0, w, h);
+        BitmapData sd = src.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        BitmapData dd = dst.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            byte* s = (byte*)sd.Scan0;
+            byte* d = (byte*)dd.Scan0;
+            int ss = sd.Stride;
+            int ds = dd.Stride;
+            for (int y = 0; y < h; y++)
+            {
+                float sy = y - dip;
+                int y0 = (int)Math.Floor(sy);
+                float f = sy - y0;
+                float w0 = 1f - f;
+                int y1 = y0 + 1;
+                byte* dp = d + y * ds;
+                byte* r0 = ((uint)y0 < (uint)h) ? s + y0 * ss : null;
+                byte* r1 = ((uint)y1 < (uint)h) ? s + y1 * ss : null;
+                for (int x = 0; x < w; x++)
+                {
+                    int p = x * 4;
+                    int b0 = 0, g0 = 0, r = 0, a0 = 0;
+                    int b1 = 0, g1 = 0, rr = 0, a1 = 0;
+                    if (r0 != null)
+                    {
+                        b0 = r0[p];
+                        g0 = r0[p + 1];
+                        r = r0[p + 2];
+                        a0 = r0[p + 3];
+                    }
+                    if (r1 != null)
+                    {
+                        b1 = r1[p];
+                        g1 = r1[p + 1];
+                        rr = r1[p + 2];
+                        a1 = r1[p + 3];
+                    }
+                    float af = a0 * w0 + a1 * f;
+                    if (af < 0.5f)
+                    {
+                        dp[p] = 0;
+                        dp[p + 1] = 0;
+                        dp[p + 2] = 0;
+                        dp[p + 3] = 0;
+                        continue;
+                    }
+                    float inv = 1f / af;
+                    dp[p] = ClampByte((b0 * a0 * w0 + b1 * a1 * f) * inv);
+                    dp[p + 1] = ClampByte((g0 * a0 * w0 + g1 * a1 * f) * inv);
+                    dp[p + 2] = ClampByte((r * a0 * w0 + rr * a1 * f) * inv);
+                    dp[p + 3] = ClampByte(af);
+                }
+            }
+        }
+        finally
+        {
+            src.UnlockBits(sd);
+            dst.UnlockBits(dd);
+        }
+    }
+
+    static byte ClampByte(float v)
+    {
+        if (v <= 0f) return 0;
+        if (v >= 255f) return 255;
+        return (byte)(v + 0.5f);
+    }
+
+    void TickCore()
+    {
+        long now = clock.ElapsedMilliseconds;
+        int elapsed = (int)(now - lastClock);
+        lastClock = now;
+        if (elapsed < 1) elapsed = 1;
+        if (elapsed > 33) elapsed = 33;
+
         if (hidden)
         {
             if (!hiddenApplied)
@@ -172,17 +703,47 @@ class PendantForm : Form
             hiddenApplied = false;
         }
 
+        Bitmap[] anim = null;
+        if (formIndex == 1) anim = form2;
+        else if (formIndex == 2) anim = form4;
+        if (anim != null && anim.Length > 1)
+        {
+            animTime += elapsed;
+            if (formIndex == 2)
+            {
+                // One frame per tick, so the faster dance still shows every frame.
+                if (animTime >= SingFrameMs)
+                {
+                    animTime -= SingFrameMs;
+                    if (animTime > SingFrameMs) animTime = SingFrameMs;
+                    animFrame++;
+                    if (animFrame >= anim.Length) animFrame = 0;
+                }
+            }
+            else
+            {
+                while (animTime >= AnimFrameMs)
+                {
+                    animTime -= AnimFrameMs;
+                    animFrame++;
+                    if (animFrame >= anim.Length) animFrame = 0;
+                }
+            }
+        }
+
         Point cursor = CursorPosition();
-        float hang = cursorSize * 0.45f;
+
+        float hang = cursorScale * 0.45f;
         rope.SetAnchor(cursor.X + hang * 0.25f, cursor.Y + hang, !placed);
         placed = true;
-        rope.Advance(timer.Interval / 1000.0);
+        rope.Advance(elapsed / 1000.0);
 
         float angle = rope.Angle();
         float px = (float)rope.X[rope.Points - 1];
         float py = (float)rope.Y[rope.Points - 1];
-        float dw = sprite.Width * scale;
-        float dh = sprite.Height * scale;
+        Bitmap picture = CurrentPicture();
+        float dw = picture.Width * scale;
+        float dh = picture.Height * scale;
 
         float minX = px, minY = py, maxX = px, maxY = py;
         float ax = anchorX, ay = anchorY;
@@ -207,26 +768,50 @@ class PendantForm : Form
             if (y > maxY) maxY = y;
         }
 
-        const int pad = 8;
-        int winX = (int)Math.Floor(minX) - pad;
-        int winY = (int)Math.Floor(minY) - pad;
-        int winW = (int)Math.Ceiling(maxX) - winX + pad;
-        int winH = (int)Math.Ceiling(maxY) - winY + pad;
-        if (winW < 1) winW = 1;
-        if (winH < 1) winH = 1;
+        const int pad = 12;
+        int tightX = (int)Math.Floor(minX) - pad;
+        int tightY = (int)Math.Floor(minY) - pad;
+        int tightW = (int)Math.Ceiling(maxX) - tightX + pad;
+        int tightH = (int)Math.Ceiling(maxY) - tightY + pad;
+        if (tightW < 1) tightW = 1;
+        if (tightH < 1) tightH = 1;
+
+        int winX = tightX;
+        int winY = tightY;
+        int winR = tightX + tightW;
+        int winB = tightY + tightH;
+        if (hasLast)
+        {
+            int area = Math.Max(tightW, lastW) * Math.Max(tightH, lastH);
+            if (area < 1500 * 1500)
+            {
+                if (lastX < winX) winX = lastX;
+                if (lastY < winY) winY = lastY;
+                if (lastX + lastW > winR) winR = lastX + lastW;
+                if (lastY + lastH > winB) winB = lastY + lastH;
+            }
+        }
+        hasLast = true;
+        lastX = tightX;
+        lastY = tightY;
+        lastW = tightW;
+        lastH = tightH;
+        int winW = winR - winX;
+        int winH = winB - winY;
 
         using (var bmp = new Bitmap(winW, winH, PixelFormat.Format32bppArgb))
         using (var g = Graphics.FromImage(bmp))
         {
+            g.Clear(Color.Transparent);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
             g.CompositingMode = CompositingMode.SourceOver;
 
             var pts = new PointF[rope.Points];
             for (int i = 0; i < rope.Points; i++)
                 pts[i] = new PointF((float)rope.X[i] - winX, (float)rope.Y[i] - winY);
-            using (var pen = new Pen(Color.FromArgb(230, 55, 55, 62), 2.6f))
+            using (var pen = new Pen(ropeColor, 2.6f))
             {
                 pen.StartCap = LineCap.Round;
                 pen.EndCap = LineCap.Round;
@@ -239,7 +824,27 @@ class PendantForm : Form
             g.TranslateTransform(px - winX, py - winY);
             g.RotateTransform(angle * (180f / (float)Math.PI));
             g.TranslateTransform(-anchorX, -anchorY);
-            g.DrawImage(sprite, 0, 0, dw, dh);
+            if (formIndex == 2)
+            {
+                int iw = (int)Math.Round(dw);
+                int ih = (int)Math.Round(dh);
+                if (iw < 1) iw = 1;
+                if (ih < 1) ih = 1;
+                float dip = 0f;
+                if (form4 != null && form4.Length > 1)
+                {
+                    double turn = animFrame / (double)form4.Length;
+                    double wave = 0.5 - 0.5 * Math.Cos(turn * 2.0 * Math.PI);
+                    dip = (float)(wave * 18.0 * scale);
+                }
+                // Bob is inside the bitmap. A 1:1 draw keeps the belly edge from being filtered away.
+                Bitmap moved = SingMoved(animFrame, iw, ih, dip);
+                g.DrawImage(moved, new Rectangle(0, 0, iw, ih), 0, 0, iw, ih, GraphicsUnit.Pixel);
+            }
+            else
+            {
+                g.DrawImage(picture, 0, 0, dw, dh);
+            }
             g.Restore(state);
 
             Premultiply(bmp);
@@ -328,13 +933,36 @@ class PendantForm : Form
     {
         IntPtr screen = GetDC(IntPtr.Zero);
         IntPtr mem = CreateCompatibleDC(screen);
-        IntPtr hBmp = bmp.GetHbitmap(Color.FromArgb(0, 0, 0, 0));
+        var header = new BitmapInfoHeader();
+        header.biSize = 40;
+        header.biWidth = bmp.Width;
+        header.biHeight = -bmp.Height;
+        header.biPlanes = 1;
+        header.biBitCount = 32;
+        IntPtr bits;
+        IntPtr hBmp = CreateDIBSection(screen, ref header, 0, out bits, IntPtr.Zero, 0);
+        if (hBmp == IntPtr.Zero)
+        {
+            DeleteDC(mem);
+            ReleaseDC(IntPtr.Zero, screen);
+            return;
+        }
+        var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+        var data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        int rowBytes = bmp.Width * 4;
+        for (int row = 0; row < bmp.Height; row++)
+        {
+            IntPtr src = new IntPtr(data.Scan0.ToInt64() + (long)row * data.Stride);
+            IntPtr dst = new IntPtr(bits.ToInt64() + (long)row * rowBytes);
+            CopyMemory(dst, src, (uint)rowBytes);
+        }
+        bmp.UnlockBits(data);
         IntPtr old = SelectObject(mem, hBmp);
         try
         {
             var size = new Size(bmp.Width, bmp.Height);
             var dst = new Point(x, y);
-            var src = new Point(0, 0);
+            var srcPt = new Point(0, 0);
             var blend = new BlendFunction
             {
                 BlendOp = 0,
@@ -342,7 +970,7 @@ class PendantForm : Form
                 SourceConstantAlpha = 255,
                 AlphaFormat = 1
             };
-            UpdateLayeredWindow(Handle, screen, ref dst, ref size, mem, ref src, 0, ref blend, 2);
+            UpdateLayeredWindow(Handle, screen, ref dst, ref size, mem, ref srcPt, 0, ref blend, 2);
         }
         finally
         {
@@ -351,6 +979,95 @@ class PendantForm : Form
             DeleteDC(mem);
             ReleaseDC(IntPtr.Zero, screen);
         }
+    }
+
+    static Icon MakeColdyIcon(Bitmap source, out MemoryStream kept)
+    {
+        Rectangle content = ContentBounds(source);
+        int[] sizes = { 16, 32, 48, 256 };
+        byte[][] blobs = new byte[sizes.Length][];
+        for (int i = 0; i < sizes.Length; i++)
+            blobs[i] = IconPng(source, content, sizes[i]);
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write((ushort)0);
+        bw.Write((ushort)1);
+        bw.Write((ushort)sizes.Length);
+        int offset = 6 + 16 * sizes.Length;
+        for (int i = 0; i < sizes.Length; i++)
+        {
+            int side = sizes[i] >= 256 ? 0 : sizes[i];
+            bw.Write((byte)side);
+            bw.Write((byte)side);
+            bw.Write((byte)0);
+            bw.Write((byte)0);
+            bw.Write((ushort)1);
+            bw.Write((ushort)32);
+            bw.Write(blobs[i].Length);
+            bw.Write(offset);
+            offset += blobs[i].Length;
+        }
+        for (int i = 0; i < blobs.Length; i++) bw.Write(blobs[i]);
+        bw.Flush();
+        ms.Position = 0;
+        kept = ms;
+        return new Icon(ms);
+    }
+
+    static byte[] IconPng(Bitmap source, Rectangle content, int size)
+    {
+        using (var square = new Bitmap(size, size, PixelFormat.Format32bppArgb))
+        using (var g = Graphics.FromImage(square))
+        {
+            g.Clear(Color.Transparent);
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            int margin = Math.Max(1, size / 16);
+            int inner = size - margin * 2;
+            int dw = inner;
+            int dh = inner;
+            if (content.Width > 0 && content.Height > 0)
+            {
+                if (content.Width * inner >= content.Height * inner)
+                {
+                    dh = inner * content.Height / content.Width;
+                    if (dh < 1) dh = 1;
+                }
+                else
+                {
+                    dw = inner * content.Width / content.Height;
+                    if (dw < 1) dw = 1;
+                }
+            }
+            var dest = new Rectangle((size - dw) / 2, (size - dh) / 2, dw, dh);
+            g.DrawImage(source, dest, content, GraphicsUnit.Pixel);
+            using (var png = new MemoryStream())
+            {
+                square.Save(png, ImageFormat.Png);
+                return png.ToArray();
+            }
+        }
+    }
+
+    static Rectangle ContentBounds(Bitmap bitmap)
+    {
+        int left = bitmap.Width;
+        int top = bitmap.Height;
+        int right = -1;
+        int bottom = -1;
+        for (int y = 0; y < bitmap.Height; y++)
+        {
+            for (int x = 0; x < bitmap.Width; x++)
+            {
+                if (bitmap.GetPixel(x, y).A <= 16) continue;
+                if (x < left) left = x;
+                if (y < top) top = y;
+                if (x > right) right = x;
+                if (y > bottom) bottom = y;
+            }
+        }
+        if (right < 0) return new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+        return Rectangle.FromLTRB(left, top, right + 1, bottom + 1);
     }
 
     static Point CursorPosition()
@@ -388,6 +1105,34 @@ class PendantForm : Form
     [DllImport("gdi32.dll")]
     static extern bool DeleteObject(IntPtr obj);
 
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateDIBSection(IntPtr hdc, ref BitmapInfoHeader pbmi, uint usage, out IntPtr bits, IntPtr hSection, uint offset);
+
+    [DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory")]
+    static extern void CopyMemory(IntPtr dest, IntPtr src, uint length);
+
+    [DllImport("winmm.dll")]
+    static extern uint timeBeginPeriod(uint period);
+
+    [DllImport("winmm.dll")]
+    static extern uint timeEndPeriod(uint period);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct BitmapInfoHeader
+    {
+        public int biSize;
+        public int biWidth;
+        public int biHeight;
+        public short biPlanes;
+        public short biBitCount;
+        public int biCompression;
+        public int biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public int biClrUsed;
+        public int biClrImportant;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     struct BlendFunction
     {
@@ -424,9 +1169,9 @@ class Rope
     const double RestAngleDegrees = 1;
     const double RestDelay = 0.3;
 
-    public readonly int Segments;
-    public readonly int Points;
-    public readonly double[] X, Y, OldX, OldY;
+    public int Segments;
+    public int Points;
+    public double[] X, Y, OldX, OldY;
     public float RestLen;
     public float Gravity;
     public float SegLen;
@@ -470,8 +1215,43 @@ class Rope
 
     public void SetLength(float restLen)
     {
-        if (restLen < 24f) restLen = 24f;
+        if (restLen < 1f) restLen = 1f;
         RestLen = restLen;
+        // Roughly one joint per 40 px: a 1000 px rope bends smoothly instead
+        // of becoming a handful of long straight rods.
+        int segments = (int)Math.Round(restLen / 40f) + 2;
+        if (segments < 2) segments = 2;
+        if (segments > 28) segments = 28;
+        Resize(segments);
+        SegLen = RestLen / Segments;
+        frozen = false;
+        stillSeconds = 0;
+    }
+
+    // Keep the current shape while changing the number of joints, so dragging
+    // the length slider never makes the rope snap back to a straight line.
+    public void Resize(int segments)
+    {
+        if (segments < 2) segments = 2;
+        if (segments > 28) segments = 28;
+        if (segments == Segments) return;
+        int points = segments + 1;
+        double[] nx = new double[points], ny = new double[points];
+        double[] nox = new double[points], noy = new double[points];
+        for (int i = 0; i < points; i++)
+        {
+            double pos = (double)i * Segments / segments;
+            int j = (int)pos;
+            if (j >= Segments) j = Segments - 1;
+            double f = pos - j;
+            nx[i] = X[j] + (X[j + 1] - X[j]) * f;
+            ny[i] = Y[j] + (Y[j + 1] - Y[j]) * f;
+            nox[i] = OldX[j] + (OldX[j + 1] - OldX[j]) * f;
+            noy[i] = OldY[j] + (OldY[j + 1] - OldY[j]) * f;
+        }
+        Segments = segments;
+        Points = points;
+        X = nx; Y = ny; OldX = nox; OldY = noy;
         SegLen = RestLen / Segments;
         frozen = false;
         stillSeconds = 0;
@@ -677,18 +1457,31 @@ class Rope
 class SettingsForm : Form
 {
     readonly PendantForm pendant = new PendantForm();
-    readonly Timer hotkeyTimer = new Timer();
-    readonly TextBox nameBox = new TextBox();
-    readonly TrackBar ropeBar = new TrackBar();
-    readonly TrackBar sizeBar = new TrackBar();
-    readonly TrackBar cursorSizeBar = new TrackBar();
+    readonly System.Windows.Forms.Timer hotkeyTimer = new System.Windows.Forms.Timer();
+    readonly IceSlider ropeBar = new IceSlider();
+    readonly IceSlider sizeBar = new IceSlider();
+    readonly IceSlider cursorSizeBar = new IceSlider();
+    readonly ComboBox formBox = new ComboBox();
     readonly ComboBox cursorBox = new ComboBox();
+    readonly Button colorButton = new Button();
+    readonly Panel colorSwatch = new Panel();
     readonly Button hotkeyButton = new Button();
     readonly Label ropeValue = new Label();
     readonly Label sizeValue = new Label();
     readonly Label cursorSizeValue = new Label();
     readonly Button hideButton = new Button();
-    readonly Label status = new Label();
+    readonly CheckBox startupBox = new CheckBox();
+    readonly CheckBox backgroundBox = new CheckBox();
+    readonly MarkButton minButton = new MarkButton();
+    readonly MarkButton closeButton = new MarkButton();
+    readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
+    Bitmap logo;
+    int hairlineY;
+    int markDrawH;
+    int editorX;
+    int labelWidth;
+    bool draggingWindow;
+    Point dragOffset;
     int hotkeyVk = 0x77;
     int hotkeyVk2;
     int capturedVk;
@@ -696,84 +1489,271 @@ class SettingsForm : Form
     bool capturingHotkey;
     bool chordDown;
     bool loading = true;
+    bool releaseNotesSeen;
     bool cursorApplied;
+    bool exitRequested;
+    bool startHidden;
+    bool allowShow;
+    bool updateBusy;
+    bool updating;
     string settingsPath;
+    Color ropeColor = Color.FromArgb(55, 55, 62);
+    readonly int[] customColors = DefaultCustomColors();
+    int boxHeight = 34;
+    static readonly Color Ice = Color.FromArgb(231, 243, 248);
+    static readonly Color Ink = Color.FromArgb(45, 58, 68);
+    static readonly Color Field = Color.White;
+    static readonly Color Line = Color.FromArgb(214, 226, 234);
+    static readonly Color Muted = Color.FromArgb(90, 104, 116);
 
     public SettingsForm()
     {
         Text = "Coldy";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(520, 420);
-        Font = new Font("Microsoft YaHei UI", 10.5f);
+        DoubleBuffered = true;
+        Font = new Font("Microsoft YaHei UI", 9f);
+        BackColor = Ice;
+        ForeColor = Ink;
         KeyPreview = true;
         string dir = Path.GetDirectoryName(Application.ExecutablePath);
         settingsPath = Path.Combine(dir, "coldy.ini");
+        string logoPath = Path.Combine(dir, "assets", "coldy-logo.png");
+        if (File.Exists(logoPath))
+        {
+            try { logo = new Bitmap(logoPath); }
+            catch { logo = null; }
+        }
 
-        AddRow(28, "名字", nameBox, 280);
-        nameBox.Text = "Coldy";
+        boxHeight = TextRenderer.MeasureText("选择颜色", Font).Height + 16;
+        if (boxHeight < 28) boxHeight = 28;
+        labelWidth = TextRenderer.MeasureText("隐藏快捷键", Font).Width + 16;
+        editorX = 28 + labelWidth;
+        int valueW = TextRenderer.MeasureText("420", Font).Width + 16;
+        int sliderW = 220;
+        int clientW = editorX + sliderW + 10 + valueW + 28;
+        int hotkeyW = ButtonWidth("请按两个键");
+        int hideW = ButtonWidth("隐藏人物");
+        int rowW = editorX + hotkeyW + 12 + hideW + 28;
+        if (clientW < rowW) clientW = rowW;
+        int colorW = ButtonWidth("选择颜色");
+        int colorRow = editorX + colorW + 8 + boxHeight + 28;
+        if (clientW < colorRow) clientW = colorRow;
+        if (clientW < 460) clientW = 460;
+        ClientSize = new Size(clientW, 720);
 
-        SetupBar(ropeBar, 40, 320, 120);
-        SetupBar(sizeBar, 80, 420, 190);
+        int chrome = boxHeight;
+        if (chrome > 32) chrome = 32;
+        if (chrome < 26) chrome = 26;
+        closeButton.CloseMark = true;
+        closeButton.SetBounds(clientW - 16 - chrome, 12, chrome, chrome);
+        minButton.SetBounds(closeButton.Left - 6 - chrome, 12, chrome, chrome);
+        Controls.Add(minButton);
+        Controls.Add(closeButton);
+
+        Icon = pendant.AppIcon;
+        startHidden = StartedInTray();
+
+        int bodyH = boxHeight * 2 + 4;
+        if (bodyH < 64) bodyH = 64;
+        markDrawH = bodyH * 380 / 242;
+        hairlineY = 12 + markDrawH + 12;
+        int y = hairlineY + 14;
+        int gap = 8;
+        int right = clientW - 28;
+        int fieldW = right - editorX;
+        if (fieldW > 280) fieldW = 280;
+
+        SetupBar(ropeBar, 0, 1000, 120);
+        SetupBar(sizeBar, 30, 420, 190);
         SetupBar(cursorSizeBar, 16, 128, 32);
-        AddRow(78, "绳子长度", ropeBar, 250);
-        ropeValue.SetBounds(390, 82, 60, 24);
-        Controls.Add(ropeValue);
-        AddRow(132, "人物大小", sizeBar, 250);
-        sizeValue.SetBounds(390, 136, 60, 24);
-        Controls.Add(sizeValue);
-
-        cursorBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        cursorBox.Items.AddRange(new object[] { "箭头", "手型", "十字", "工字", "圆点", "系统默认" });
+        PrepareButton(colorButton);
+        colorButton.Text = "选择颜色";
+        PrepareCombo(formBox);
+        // The old form 3 is a draft only; the singing form is named cocococo.
+        formBox.Items.AddRange(new object[] { "形态 1", "形态 2", "cocococo" });
+        formBox.SelectedIndex = 0;
+        PrepareCombo(cursorBox);
+        cursorBox.Items.AddRange(new object[] { "系统默认", "跟随场景" });
         cursorBox.SelectedIndex = 0;
-        AddRow(186, "光标", cursorBox, 180);
-
-        AddRow(236, "光标大小", cursorSizeBar, 250);
-        cursorSizeValue.SetBounds(390, 240, 60, 24);
-        Controls.Add(cursorSizeValue);
-
+        PrepareButton(hotkeyButton);
         hotkeyButton.Text = "F8";
-        AddRow(290, "隐藏快捷键", hotkeyButton, 200);
+        PrepareButton(hideButton);
         hideButton.Text = "隐藏人物";
-        hideButton.SetBounds(350, 286, 110, 30);
         Controls.Add(hideButton);
 
-        var exitButton = new Button();
-        exitButton.Text = "退出";
-        exitButton.SetBounds(24, 360, 100, 34);
-        Controls.Add(exitButton);
+        y = AddSection(y, "角色");
+        AddRow(y, "人物大小", sizeBar, sliderW, false);
+        PlaceValue(sizeValue, y, sliderW, valueW);
+        y += boxHeight + gap;
+        AddRow(y, "形态", formBox, fieldW < 180 ? fieldW : 180, true);
+        y += boxHeight + gap;
+        AddRow(y, "隐藏快捷键", hotkeyButton, hotkeyW, true);
+        FitButton(hotkeyButton, "请按两个键");
+        FitButton(hideButton, "隐藏人物");
+        hideButton.SetBounds(right - hideButton.Width, y, hideButton.Width, boxHeight);
+        y += boxHeight + 14;
 
-        status.SetBounds(140, 364, 320, 28);
-        status.ForeColor = Color.DimGray;
-        Controls.Add(status);
+        y = AddSection(y, "绳子");
+        AddRow(y, "绳子长度", ropeBar, sliderW, false);
+        PlaceValue(ropeValue, y, sliderW, valueW);
+        y += boxHeight + gap;
+        AddRow(y, "绳子颜色", colorButton, colorW, true);
+        FitButton(colorButton, "选择颜色");
+        colorSwatch.BorderStyle = BorderStyle.FixedSingle;
+        colorSwatch.SetBounds(colorButton.Right + 8, colorButton.Top, boxHeight, boxHeight);
+        Controls.Add(colorSwatch);
+        ShowRopeColor();
+        y += boxHeight + 14;
+
+        y = AddSection(y, "光标");
+        AddRow(y, "光标", cursorBox, fieldW < 180 ? fieldW : 180, true);
+        y += boxHeight + gap;
+        AddRow(y, "光标大小", cursorSizeBar, sliderW, false);
+        PlaceValue(cursorSizeValue, y, sliderW, valueW);
+        y += boxHeight + 14;
+
+        startupBox.Text = "开机自启动";
+        startupBox.AutoSize = true;
+        startupBox.BackColor = Ice;
+        startupBox.ForeColor = Ink;
+        startupBox.SetBounds(28, y + 4, 120, boxHeight);
+        Controls.Add(startupBox);
+        backgroundBox.Text = "后台运行";
+        backgroundBox.AutoSize = true;
+        backgroundBox.BackColor = Ice;
+        backgroundBox.ForeColor = Ink;
+        backgroundBox.SetBounds(168, y + 4, 120, boxHeight);
+        Controls.Add(backgroundBox);
+        y += boxHeight + 20;
+        ClientSize = new Size(clientW, y);
 
         LoadSettings();
+        startupBox.Checked = StartupEnabled();
         ShowHotkey();
+        ShowRopeColor();
         RefreshNumbers();
+        ApplyBackground();
         loading = false;
         ApplyAll(true);
 
-        nameBox.TextChanged += delegate { if (!loading) ApplyAll(false); };
         ropeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
+        colorButton.Click += delegate { PickRopeColor(); };
         sizeBar.ValueChanged += delegate { if (!loading) ApplyAll(false); };
         cursorSizeBar.ValueChanged += delegate { if (!loading) ApplyAll(true); };
+        formBox.SelectedIndexChanged += delegate
+        {
+            if (loading) return;
+            ApplyAll(false);
+            Invalidate(new Rectangle(0, 0, ClientSize.Width, hairlineY + 1));
+        };
         cursorBox.SelectedIndexChanged += delegate { if (!loading) ApplyAll(true); };
         hotkeyButton.Click += delegate { BeginHotkeyCapture(); };
         hideButton.Click += delegate { ToggleHidden(); };
-        exitButton.Click += delegate { Close(); };
+        minButton.Click += delegate
+        {
+            if (backgroundBox.Checked) HideToTray();
+            else WindowState = FormWindowState.Minimized;
+        };
+        closeButton.Click += delegate
+        {
+            if (backgroundBox.Checked) HideToTray();
+            else RequestExit();
+        };
+        startupBox.CheckedChanged += delegate
+        {
+            if (loading) return;
+            SetStartup(startupBox.Checked);
+            SaveSettings();
+        };
+        backgroundBox.CheckedChanged += delegate
+        {
+            if (loading) return;
+            ApplyBackground();
+            SaveSettings();
+        };
 
         var menu = pendant.TrayIcon.ContextMenu;
-        menu.MenuItems.Add(new MenuItem("显示控制台", delegate { Show(); Activate(); }));
+        menu.MenuItems.Add(new MenuItem("显示控制台", delegate { ShowSettings(); }));
         menu.MenuItems.Add(new MenuItem("隐藏人物", delegate { ToggleHidden(); }));
-        menu.MenuItems.Add(new MenuItem("退出", delegate { Close(); }));
-        pendant.TrayIcon.DoubleClick += delegate { Show(); Activate(); };
+        menu.MenuItems.Add(new MenuItem("退出", delegate { RequestExit(); }));
+        pendant.TrayIcon.DoubleClick += delegate { ShowSettings(); };
 
         hotkeyTimer.Interval = 30;
         hotkeyTimer.Tick += delegate { PollHotkey(); };
         hotkeyTimer.Start();
+        updateTimer.Interval = 10 * 60 * 1000;
+        updateTimer.Tick += delegate { CheckForUpdate(); };
+        updateTimer.Start();
+        var firstCheck = new System.Windows.Forms.Timer();
+        firstCheck.Interval = 4000;
+        firstCheck.Tick += delegate
+        {
+            firstCheck.Stop();
+            firstCheck.Dispose();
+            CheckForUpdate();
+        };
+        firstCheck.Start();
+        var listener = new Thread((ThreadStart)delegate
+        {
+            while (!IsDisposed)
+            {
+                Program.WaitForShow();
+                if (IsDisposed) return;
+                try { BeginInvoke((MethodInvoker)delegate { ShowSettings(); }); }
+                catch { return; }
+            }
+        });
+        listener.IsBackground = true;
+        listener.Start();
+        MatchBoxHeights();
+        ApplyRound();
+        if (NotesRequested() || !releaseNotesSeen)
+            Load += delegate { BeginInvoke((MethodInvoker)ShowReleaseNotes); };
 
         pendant.Show();
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            CreateParams cp = base.CreateParams;
+            cp.ClassStyle |= 0x00020000;
+            return cp;
+        }
+    }
+
+    void MatchBoxHeights()
+    {
+        int item = boxHeight - 8;
+        if (item < 8) item = 8;
+        formBox.ItemHeight = item;
+        cursorBox.ItemHeight = item;
+        colorButton.Height = boxHeight;
+        hotkeyButton.Height = boxHeight;
+        hideButton.Height = boxHeight;
+        formBox.Height = boxHeight;
+        cursorBox.Height = boxHeight;
+        colorSwatch.SetBounds(colorButton.Right + 8, colorButton.Top, boxHeight, boxHeight);
+        hideButton.Top = hotkeyButton.Top;
+    }
+
+    int AddSection(int y, string title)
+    {
+        var bar = new Panel();
+        bar.BackColor = Color.FromArgb(150, 200, 226);
+        bar.SetBounds(28, y + 5, 3, 14);
+        Controls.Add(bar);
+        var label = new Label();
+        label.Text = title;
+        label.AutoSize = false;
+        label.BackColor = Ice;
+        label.ForeColor = Ink;
+        label.TextAlign = ContentAlignment.MiddleLeft;
+        label.SetBounds(38, y, 160, 22);
+        Controls.Add(label);
+        return y + 22;
     }
 
     void PollHotkey()
@@ -786,25 +1766,148 @@ class SettingsForm : Form
         chordDown = down;
     }
 
-    void AddRow(int y, string caption, Control editor, int editorWidth)
+    void AddRow(int y, string caption, Control editor, int editorWidth, bool box)
     {
         var label = new Label();
         label.Text = caption;
-        label.SetBounds(24, y + 4, 110, 24);
+        label.AutoSize = false;
+        label.BackColor = Ice;
+        label.ForeColor = Ink;
         label.TextAlign = ContentAlignment.MiddleLeft;
-        editor.SetBounds(140, y, editorWidth, 32);
+        label.SetBounds(28, y, labelWidth, boxHeight);
+        int editorH = box ? boxHeight : editor.Height;
+        int editorY = y + (boxHeight - editorH) / 2;
+        editor.SetBounds(editorX, editorY, editorWidth, editorH);
         Controls.Add(label);
         Controls.Add(editor);
     }
 
-    static void SetupBar(TrackBar bar, int min, int max, int value)
+    void PlaceValue(Label label, int y, int sliderW, int valueW)
+    {
+        label.AutoSize = false;
+        label.BackColor = Ice;
+        label.ForeColor = Ink;
+        label.TextAlign = ContentAlignment.MiddleLeft;
+        label.SetBounds(editorX + sliderW + 10, y, valueW, boxHeight);
+        Controls.Add(label);
+    }
+
+    int ButtonWidth(string text)
+    {
+        int width = TextRenderer.MeasureText(text, Font).Width + 28;
+        if (width < 96) width = 96;
+        return width;
+    }
+
+    static void PrepareButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.UseVisualStyleBackColor = false;
+        button.BackColor = Field;
+        button.ForeColor = Ink;
+        button.FlatAppearance.BorderColor = Color.FromArgb(196, 214, 224);
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(220, 236, 244);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(206, 228, 238);
+    }
+
+    static void PrepareCombo(ComboBox box)
+    {
+        box.IntegralHeight = true;
+        box.DropDownStyle = ComboBoxStyle.DropDownList;
+        box.FlatStyle = FlatStyle.Flat;
+        box.BackColor = Field;
+        box.ForeColor = Ink;
+        box.DropDownClosed += delegate
+        {
+            Control parent = box.Parent;
+            if (parent != null) parent.SelectNextControl(box, true, true, true, true);
+        };
+    }
+
+    void SetupBar(IceSlider bar, int min, int max, int value)
     {
         bar.Minimum = min;
         bar.Maximum = max;
-        bar.TickFrequency = Math.Max(1, (max - min) / 8);
         bar.Value = value;
-        bar.AutoSize = false;
-        bar.Height = 32;
+        bar.Height = 28;
+    }
+
+    void PickRopeColor()
+    {
+        using (var dialog = new ColorDialog())
+        {
+            dialog.AllowFullOpen = true;
+            dialog.FullOpen = false;
+            dialog.AnyColor = true;
+            dialog.SolidColorOnly = false;
+            dialog.Color = ropeColor;
+            dialog.CustomColors = (int[])customColors.Clone();
+            DialogResult result = dialog.ShowDialog(this);
+            if (dialog.CustomColors != null && dialog.CustomColors.Length > 0)
+            {
+                int count = Math.Min(customColors.Length, dialog.CustomColors.Length);
+                for (int i = 0; i < count; i++) customColors[i] = dialog.CustomColors[i];
+            }
+            if (result != DialogResult.OK)
+            {
+                SaveSettings();
+                return;
+            }
+            ropeColor = dialog.Color;
+            ShowRopeColor();
+            ApplyAll(false);
+        }
+    }
+
+    static int[] DefaultCustomColors()
+    {
+        int[] colors = new int[16];
+        for (int i = 0; i < colors.Length; i++) colors[i] = 0xFFFFFF;
+        return colors;
+    }
+
+    void ParseCustomColors(string val)
+    {
+        if (val == null) return;
+        string[] parts = val.Split(',');
+        for (int i = 0; i < parts.Length && i < customColors.Length; i++)
+        {
+            int color;
+            if (int.TryParse(parts[i].Trim(), out color) && color >= 0) customColors[i] = color;
+        }
+    }
+
+    void ShowRopeColor()
+    {
+        colorSwatch.BackColor = ropeColor;
+    }
+
+    void FitButton(Button button, string text)
+    {
+        Size measured = TextRenderer.MeasureText(text, Font);
+        int width = measured.Width + 28;
+        if (width < 96) width = 96;
+        button.SetBounds(button.Left, button.Top, width, boxHeight);
+    }
+
+    static Color ParseColor(string val)
+    {
+        Color fallback = Color.FromArgb(55, 55, 62);
+        if (val == null) return fallback;
+        string[] parts = val.Split(',');
+        if (parts.Length != 3) return fallback;
+        int r, g, b;
+        if (!int.TryParse(parts[0].Trim(), out r)) return fallback;
+        if (!int.TryParse(parts[1].Trim(), out g)) return fallback;
+        if (!int.TryParse(parts[2].Trim(), out b)) return fallback;
+        if (r < 0) r = 0;
+        if (g < 0) g = 0;
+        if (b < 0) b = 0;
+        if (r > 255) r = 255;
+        if (g > 255) g = 255;
+        if (b > 255) b = 255;
+        return Color.FromArgb(r, g, b);
     }
 
     void RefreshNumbers()
@@ -812,19 +1915,19 @@ class SettingsForm : Form
         ropeValue.Text = ropeBar.Value.ToString();
         sizeValue.Text = sizeBar.Value.ToString();
         cursorSizeValue.Text = cursorSizeBar.Value.ToString();
-        cursorSizeBar.Enabled = cursorBox.SelectedIndex != 5;
+        cursorSizeBar.Enabled = cursorBox.SelectedIndex == 1;
     }
 
     void ApplyAll(bool cursor)
     {
         RefreshNumbers();
-        string name = nameBox.Text.Trim();
-        if (name.Length == 0) name = "Coldy";
-        Text = name;
-        pendant.SetName(name);
+        Text = "Coldy";
+        pendant.SetName("Coldy");
         pendant.SetRopeLength(ropeBar.Value);
+        pendant.SetRopeColor(ropeColor);
         pendant.SetDisplayHeight(sizeBar.Value);
-        pendant.SetCursorSize(cursorSizeBar.Value);
+        pendant.SetForm(formBox.SelectedIndex);
+        pendant.SetCursorSize(cursorSizeBar.Value, cursorBox.SelectedIndex == 1);
         if (cursor) ApplyCursor();
         SaveSettings();
     }
@@ -840,19 +1943,14 @@ class SettingsForm : Form
 
     void ApplyCursor()
     {
-        if (cursorBox.SelectedIndex == 5)
+        if (cursorBox.SelectedIndex != 1)
         {
             CursorFactory.Restore();
             cursorApplied = false;
-            status.Text = "已恢复系统光标";
             return;
         }
-        string[] styles = { "arrow", "hand", "cross", "ibeam", "dot" };
-        int index = cursorBox.SelectedIndex;
-        if (index < 0 || index >= styles.Length) index = 0;
-        CursorFactory.Apply(styles[index], cursorSizeBar.Value);
+        CursorFactory.ApplyScheme(cursorSizeBar.Value);
         cursorApplied = true;
-        status.Text = "光标已切换";
     }
 
     void BeginHotkeyCapture()
@@ -861,7 +1959,6 @@ class SettingsForm : Form
         capturedCount = 0;
         capturedVk = 0;
         hotkeyButton.Text = "请按两个键";
-        status.Text = "同时或依次按下两个键，Esc 取消";
     }
 
     void RememberKey(int vk)
@@ -898,8 +1995,6 @@ class SettingsForm : Form
         string shown = KeyName(hotkeyVk);
         if (hotkeyVk2 != 0) shown = shown + " + " + KeyName(hotkeyVk2);
         hotkeyButton.Text = shown;
-        if (!loading)
-            status.Text = "同时按下 " + shown + " 隐藏或显示人物";
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -997,14 +2092,434 @@ class SettingsForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        MatchBoxHeights();
         ShowHotkey();
+        ApplyRound();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (!IsHandleCreated || WindowState == FormWindowState.Minimized) return;
+        ApplyRound();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        int top = 12;
+        // Top-left corner: just the wordmark, no live character preview.
+        if (logo != null && logo.Width > 0 && logo.Height > 0)
+        {
+            int maxW = minButton.Left - 12 - 28;
+            if (maxW < 40) maxW = 40;
+            float ls = Math.Min((float)maxW / logo.Width, (float)markDrawH / logo.Height);
+            int lw = (int)Math.Round(logo.Width * ls);
+            int lh = (int)Math.Round(logo.Height * ls);
+            if (lw > 0 && lh > 0)
+            {
+                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                e.Graphics.DrawImage(logo,
+                    new Rectangle(28, top + (markDrawH - lh) / 2, lw, lh));
+            }
+        }
+        using (var pen = new Pen(Line))
+            e.Graphics.DrawLine(pen, 28, hairlineY, ClientSize.Width - 28, hairlineY);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button != MouseButtons.Left || e.Y >= hairlineY) return;
+        draggingWindow = true;
+        dragOffset = e.Location;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!draggingWindow) return;
+        Point screen = PointToScreen(e.Location);
+        Location = new Point(screen.X - dragOffset.X, screen.Y - dragOffset.Y);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        draggingWindow = false;
+    }
+
+    void ApplyRound()
+    {
+        if (Width < 8 || Height < 8) return;
+        using (GraphicsPath path = RoundPath(Width, Height, 20))
+        {
+            Region old = Region;
+            Region = new Region(path);
+            if (old != null) old.Dispose();
+        }
+    }
+
+    static GraphicsPath RoundPath(int width, int height, int radius)
+    {
+        var path = new GraphicsPath();
+        int d = radius * 2;
+        if (d > width) d = width;
+        if (d > height) d = height;
+        path.AddArc(0, 0, d, d, 180, 90);
+        path.AddArc(width - d - 1, 0, d, d, 270, 90);
+        path.AddArc(width - d - 1, height - d - 1, d, d, 0, 90);
+        path.AddArc(0, height - d - 1, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    protected override void SetVisibleCore(bool value)
+    {
+        if (startHidden && !allowShow)
+        {
+            value = false;
+            if (!IsHandleCreated) CreateHandle();
+        }
+        base.SetVisibleCore(value);
+    }
+
+    void ShowSettings()
+    {
+        allowShow = true;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Show();
+        SetTaskbarButton(!backgroundBox.Checked);
+        Activate();
+    }
+
+    void HideToTray()
+    {
+        SetTaskbarButton(false);
+        Hide();
+    }
+
+    void RequestExit()
+    {
+        exitRequested = true;
+        Close();
+    }
+
+    void ApplyBackground()
+    {
+        bool showButton = !(backgroundBox.Checked || (!allowShow && startHidden));
+        SetTaskbarButton(showButton);
+    }
+
+    bool taskbarShown = true;
+
+    void SetTaskbarButton(bool show)
+    {
+        if (!IsHandleCreated)
+        {
+            ShowInTaskbar = show;
+            taskbarShown = show;
+            return;
+        }
+        if (show == taskbarShown) return;
+        int ex = GetWindowLong(Handle, -20);
+        if (show) ex = (ex | 0x00040000) & ~0x00000080;
+        else ex = (ex | 0x00000080) & ~0x00040000;
+        SetWindowLong(Handle, -20, ex);
+        try
+        {
+            ITaskbarList list = (ITaskbarList)new TaskbarListCom();
+            list.HrInit();
+            if (show) list.AddTab(Handle);
+            else list.DeleteTab(Handle);
+        }
+        catch { }
+        taskbarShown = show;
+    }
+
+    static bool StartedInTray()
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i] == "--tray") return true;
+        }
+        return false;
+    }
+
+    static bool NotesRequested()
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i] == "--notes") return true;
+        }
+        return false;
+    }
+
+    void ShowReleaseNotes()
+    {
+        using (Form dialog = new Form())
+        {
+            dialog.FormBorderStyle = FormBorderStyle.None;
+            dialog.ShowInTaskbar = false;
+            dialog.StartPosition = FormStartPosition.Manual;
+            dialog.AutoScaleMode = AutoScaleMode.None;
+            dialog.Font = new Font("Microsoft YaHei UI", 9f);
+            dialog.BackColor = Color.White;
+            dialog.TopMost = true;
+            string notes = "v1.6.1 更新\r\n\r\n"
+                + "修复了形态下拉框无法选择选项的问题。\r\n"
+                + "修复了颜色盘的自定义颜色无法保存的问题。\r\n"
+                + "修复了「规定自定义颜色」按钮一直是灰色的问题。";
+            string[] lines = notes.Split('\n');
+            Size measured;
+            int lineH;
+            using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
+            {
+                float maxW = 0;
+                lineH = (int)Math.Ceiling(dialog.Font.GetHeight(g));
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i].TrimEnd('\r');
+                    if (line.Length == 0) line = " ";
+                    SizeF size = g.MeasureString(line, dialog.Font);
+                    if (size.Width > maxW) maxW = size.Width;
+                }
+                measured = new Size((int)Math.Ceiling(maxW), lineH * lines.Length);
+            }
+
+            Color bar = Color.FromArgb(240, 240, 240);
+            int titleH = lineH + 8;
+            int buttonH = lineH + 12;
+            int footerH = buttonH + 6;
+            int iconSize = 24;
+            int textX = 12 + iconSize + 10;
+            int clientW = textX + measured.Width + 18;
+            int bodyH = measured.Height + 16;
+            if (bodyH < iconSize + 16) bodyH = iconSize + 16;
+
+            var title = new Panel();
+            title.BackColor = bar;
+            title.SetBounds(0, 0, clientW, titleH);
+            var caption = new Label();
+            caption.Text = "Coldy";
+            caption.BackColor = bar;
+            caption.ForeColor = Color.Black;
+            caption.AutoSize = false;
+            caption.TextAlign = ContentAlignment.MiddleLeft;
+            caption.SetBounds(8, 0, 80, titleH);
+            title.Controls.Add(caption);
+            var close = new Button();
+            close.Text = "×";
+            close.FlatStyle = FlatStyle.Flat;
+            close.FlatAppearance.BorderSize = 0;
+            close.BackColor = bar;
+            close.ForeColor = Color.Black;
+            close.TabStop = false;
+            close.SetBounds(clientW - titleH, 0, titleH, titleH);
+            close.DialogResult = DialogResult.OK;
+            title.Controls.Add(close);
+
+            var icon = new PictureBox();
+            icon.Image = SystemIcons.Information.ToBitmap();
+            icon.SizeMode = PictureBoxSizeMode.Zoom;
+            icon.BackColor = Color.White;
+            icon.SetBounds(12, titleH + 8, iconSize, iconSize);
+
+            var text = new Label();
+            text.BackColor = Color.White;
+            text.ForeColor = Color.Black;
+            text.AutoSize = false;
+            text.UseCompatibleTextRendering = true;
+            text.Text = notes;
+            text.SetBounds(textX, titleH + 6, measured.Width + 2, measured.Height);
+
+            var footer = new Panel();
+            footer.BackColor = bar;
+            footer.SetBounds(0, titleH + bodyH, clientW, footerH);
+            var button = new Button();
+            button.Text = "确定";
+            button.SetBounds(clientW - 8 - 72, (footerH - buttonH) / 2, 72, buttonH);
+            button.DialogResult = DialogResult.OK;
+            footer.Controls.Add(button);
+
+            dialog.ClientSize = new Size(clientW, titleH + bodyH + footerH);
+            dialog.Controls.Add(icon);
+            dialog.Controls.Add(text);
+            dialog.Controls.Add(title);
+            dialog.Controls.Add(footer);
+            dialog.AcceptButton = button;
+            dialog.CancelButton = close;
+            dialog.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                using (Pen pen = new Pen(Color.FromArgb(196, 196, 196)))
+                    e.Graphics.DrawRectangle(pen, 0, 0, dialog.ClientSize.Width - 1, dialog.ClientSize.Height - 1);
+            };
+            Rectangle area = Screen.PrimaryScreen.WorkingArea;
+            dialog.Location = new Point(
+                area.Left + (area.Width - dialog.Width) / 2,
+                area.Top + (area.Height - dialog.Height) / 2);
+            dialog.ShowDialog();
+            releaseNotesSeen = true;
+            SaveSettings();
+        }
+    }
+
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    const string RunName = "Coldy";
+
+    static bool StartupEnabled()
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, false))
+        {
+            if (key == null) return false;
+            object value = key.GetValue(RunName);
+            return value is string && ((string)value).Length > 0;
+        }
+    }
+
+    static void SetStartup(bool enabled)
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, true))
+        {
+            if (key == null) return;
+            if (!enabled)
+            {
+                key.DeleteValue(RunName, false);
+                return;
+            }
+            string exe = Application.ExecutablePath;
+            key.SetValue(RunName, "\"" + exe + "\" --tray");
+        }
+    }
+
+    void CheckForUpdate()
+    {
+        if (updateBusy || updating || exitRequested) return;
+        updateBusy = true;
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            string tag = null;
+            string url = null;
+            bool newer = false;
+            try { newer = UpdateClient.TryGetNewer(Program.AppVersion, out tag, out url); }
+            catch { newer = false; }
+            if (!newer || IsDisposed)
+            {
+                updateBusy = false;
+                return;
+            }
+            string foundTag = tag;
+            string foundUrl = url;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    try { OfferUpdate(foundTag, foundUrl); }
+                    finally { updateBusy = false; }
+                });
+            }
+            catch
+            {
+                updateBusy = false;
+            }
+        });
+    }
+
+    void OfferUpdate(string tag, string url)
+    {
+        if (updating || exitRequested || IsDisposed) return;
+        DialogResult answer = MessageBox.Show(
+            "发现新版本 " + tag + "，是否现在更新？",
+            "Coldy",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Information,
+            MessageBoxDefaultButton.Button1,
+            MessageBoxOptions.DefaultDesktopOnly);
+        if (answer != DialogResult.Yes) return;
+        updating = true;
+        updateTimer.Stop();
+        BeginDownload(url);
+    }
+
+    void BeginDownload(string url)
+    {
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            try
+            {
+                string root = Path.Combine(Path.GetTempPath(), "ColdyUpdate");
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+                Directory.CreateDirectory(root);
+                string zipPath = Path.Combine(root, "update.zip");
+                UpdateClient.Download(url, zipPath);
+                string unpacked = Path.Combine(root, "files");
+                ZipFile.ExtractToDirectory(zipPath, unpacked);
+                string payload = UpdateClient.PayloadRoot(unpacked);
+                BeginInvoke((MethodInvoker)delegate { ApplyUpdate(payload); });
+            }
+            catch (Exception ex)
+            {
+                updating = false;
+                try
+                {
+                    string message = ex.Message;
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        updateTimer.Start();
+                        MessageBox.Show("更新没有完成。\r\n" + message, "Coldy");
+                    });
+                }
+                catch { }
+            }
+        });
+    }
+
+    void ApplyUpdate(string unpacked)
+    {
+        string exe = Application.ExecutablePath;
+        string dest = Path.GetDirectoryName(exe);
+        if (dest.EndsWith("\\")) dest = dest.Substring(0, dest.Length - 1);
+        int pid = Process.GetCurrentProcess().Id;
+        string bat = Path.Combine(Path.GetTempPath(), "coldy-update.cmd");
+        string script = "@echo off\r\n"
+            + ":wait\r\n"
+            + "tasklist /FI \"PID eq " + pid + "\" | find \"" + pid + "\" >nul\r\n"
+            + "if not errorlevel 1 (\r\n"
+            + "ping -n 2 127.0.0.1 >nul\r\n"
+            + "goto wait\r\n"
+            + ")\r\n"
+            + "xcopy /e /y /i \"" + unpacked + "\\*\" \"" + dest + "\" >nul\r\n"
+            + "start \"\" \"" + exe + "\" --notes\r\n"
+            + "del \"%~f0\"\r\n";
+        File.WriteAllText(bat, script, Encoding.Default);
+        var start = new ProcessStartInfo();
+        start.FileName = "cmd.exe";
+        start.Arguments = "/c \"" + bat + "\"";
+        start.CreateNoWindow = true;
+        start.UseShellExecute = false;
+        start.WindowStyle = ProcessWindowStyle.Hidden;
+        Process.Start(start);
+        RequestExit();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        if (!exitRequested && backgroundBox.Checked)
+        {
+            e.Cancel = true;
+            HideToTray();
+            return;
+        }
+        exitRequested = true;
         hotkeyTimer.Stop();
+        updateTimer.Stop();
         if (cursorApplied) CursorFactory.Restore();
         SaveSettings();
+        if (logo != null) logo.Dispose();
+        logo = null;
+        Icon = null;
         if (pendant != null && !pendant.IsDisposed) pendant.Close();
         base.OnFormClosing(e);
     }
@@ -1026,11 +2541,15 @@ class SettingsForm : Form
             string key = lines[i].Substring(0, eq).Trim();
             string val = lines[i].Substring(eq + 1).Trim();
             int n;
-            if (key == "name") nameBox.Text = val;
-            else if (key == "rope") SetBar(ropeBar, val);
+            if (key == "rope") SetBar(ropeBar, val);
+            else if (key == "ropeColor") ropeColor = ParseColor(val);
+            else if (key == "customColors") ParseCustomColors(val);
             else if (key == "size") SetBar(sizeBar, val);
             else if (key == "cursorSize") SetBar(cursorSizeBar, val);
             else if (key == "cursor") SelectCursor(val);
+            else if (key == "form") SelectForm(val);
+            else if (key == "background") backgroundBox.Checked = val == "1";
+            else if (key == "notes") releaseNotesSeen = val == Program.AppVersion;
             else if (key == "hotkeyVk")
             {
                 if (int.TryParse(val, out n) && n > 0) { fileVk = n; sawVk = true; }
@@ -1081,7 +2600,7 @@ class SettingsForm : Form
         return 0;
     }
 
-    static void SetBar(TrackBar bar, string val)
+    static void SetBar(IceSlider bar, string val)
     {
         int n;
         if (!int.TryParse(val, out n)) return;
@@ -1092,49 +2611,282 @@ class SettingsForm : Form
 
     void SelectCursor(string val)
     {
-        string[] styles = { "arrow", "hand", "cross", "ibeam", "dot", "system" };
-        for (int i = 0; i < styles.Length; i++)
-            if (styles[i] == val) cursorBox.SelectedIndex = i;
+        if (val == "scheme" || val == "arrow" || val == "hand" || val == "cross" || val == "ibeam" || val == "dot")
+            cursorBox.SelectedIndex = 1;
+        else
+            cursorBox.SelectedIndex = 0;
+    }
+
+    void SelectForm(string val)
+    {
+        // "4" is the old key for the singing form, kept for existing configs.
+        if (val == "3" || val == "4") formBox.SelectedIndex = 2;
+        else if (val == "2" || val == "gif") formBox.SelectedIndex = 1;
+        else formBox.SelectedIndex = 0;
+    }
+
+    static string FormKey(int index)
+    {
+        if (index == 2) return "3";
+        if (index == 1) return "2";
+        return "1";
     }
 
     void SaveSettings()
     {
         if (loading) return;
-        string[] styles = { "arrow", "hand", "cross", "ibeam", "dot", "system" };
+        string[] styles = { "system", "scheme" };
         int index = cursorBox.SelectedIndex;
         if (index < 0 || index >= styles.Length) index = 0;
-        string name = nameBox.Text.Trim();
-        if (name.Length == 0) name = "Coldy";
-        string text = "name=" + name + "\r\n"
-            + "rope=" + ropeBar.Value + "\r\n"
+        StringBuilder colors = new StringBuilder();
+        for (int i = 0; i < customColors.Length; i++)
+        {
+            if (i > 0) colors.Append(',');
+            colors.Append(customColors[i]);
+        }
+        string text = "rope=" + ropeBar.Value + "\r\n"
+            + "ropeColor=" + ropeColor.R + "," + ropeColor.G + "," + ropeColor.B + "\r\n"
+            + "customColors=" + colors + "\r\n"
             + "size=" + sizeBar.Value + "\r\n"
+            + "form=" + FormKey(formBox.SelectedIndex) + "\r\n"
             + "cursor=" + styles[index] + "\r\n"
             + "cursorSize=" + cursorSizeBar.Value + "\r\n"
             + "hotkey=" + hotkeyButton.Text + "\r\n"
             + "hotkeyVk=" + hotkeyVk + "\r\n"
-            + "hotkeyVk2=" + hotkeyVk2 + "\r\n";
+            + "hotkeyVk2=" + hotkeyVk2 + "\r\n"
+            + "startup=" + (startupBox.Checked ? "1" : "0") + "\r\n"
+            + "background=" + (backgroundBox.Checked ? "1" : "0") + "\r\n"
+            + "notes=" + (releaseNotesSeen ? Program.AppVersion : "") + "\r\n";
         try { File.WriteAllText(settingsPath, text); }
         catch { }
     }
 
     [DllImport("user32.dll")]
     static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+}
+
+[ComImport, Guid("56FDF342-FD6D-11d0-958A-006097C9A090"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ITaskbarList
+{
+    void HrInit();
+    void AddTab(IntPtr hwnd);
+    void DeleteTab(IntPtr hwnd);
+    void ActivateTab(IntPtr hwnd);
+    void SetActiveAlt(IntPtr hwnd);
+}
+
+[ComImport, Guid("56FDF344-FD6D-11d0-958A-006097C9A090")]
+class TaskbarListCom
+{
+}
+
+class IceSlider : Control
+{
+    int minimum;
+    int maximum = 100;
+    int current;
+    bool dragging;
+    public event EventHandler ValueChanged;
+
+    public int Minimum
+    {
+        get { return minimum; }
+        set { minimum = value; Invalidate(); }
+    }
+
+    public int Maximum
+    {
+        get { return maximum; }
+        set { maximum = value; Invalidate(); }
+    }
+
+    public int Value
+    {
+        get { return current; }
+        set
+        {
+            if (value < minimum) value = minimum;
+            if (value > maximum) value = maximum;
+            if (current == value) return;
+            current = value;
+            Invalidate();
+            if (ValueChanged != null) ValueChanged(this, EventArgs.Empty);
+        }
+    }
+
+    public IceSlider()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        Height = 28;
+        Cursor = Cursors.Hand;
+        BackColor = Color.FromArgb(231, 243, 248);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (!Enabled || e.Button != MouseButtons.Left) return;
+        dragging = true;
+        Capture = true;
+        SetFromX(e.X);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (dragging) SetFromX(e.X);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        dragging = false;
+    }
+
+    protected override void OnEnabledChanged(EventArgs e)
+    {
+        base.OnEnabledChanged(e);
+        Invalidate();
+    }
+
+    void SetFromX(int x)
+    {
+        int pad = 8;
+        int span = Width - pad * 2;
+        if (span < 1) span = 1;
+        float t = (x - pad) / (float)span;
+        if (t < 0f) t = 0f;
+        if (t > 1f) t = 1f;
+        int range = maximum - minimum;
+        if (range < 1) range = 1;
+        Value = minimum + (int)Math.Round(t * range);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        int pad = 8;
+        int cy = Height / 2;
+        int trackW = Width - pad * 2;
+        if (trackW < 1) trackW = 1;
+        int range = maximum - minimum;
+        float t = range <= 0 ? 0f : (current - minimum) / (float)range;
+        int fillW = (int)(trackW * t);
+        Color fill = Enabled ? Color.FromArgb(75, 168, 212) : Color.FromArgb(170, 186, 196);
+        using (var brush = new SolidBrush(Color.FromArgb(206, 222, 232)))
+            g.FillRectangle(brush, pad, cy - 2, trackW, 4);
+        if (fillW > 0)
+        {
+            using (var brush = new SolidBrush(fill))
+                g.FillRectangle(brush, pad, cy - 2, fillW, 4);
+        }
+        int thumb = 14;
+        int tx = pad + fillW - thumb / 2;
+        if (tx < pad - 2) tx = pad - 2;
+        if (tx > pad + trackW - thumb + 2) tx = pad + trackW - thumb + 2;
+        using (var brush = new SolidBrush(Color.White))
+            g.FillEllipse(brush, tx, cy - thumb / 2, thumb, thumb);
+        using (var pen = new Pen(fill, 2f))
+            g.DrawEllipse(pen, tx, cy - thumb / 2, thumb, thumb);
+    }
+}
+
+class MarkButton : Control
+{
+    bool close;
+    bool hot;
+
+    public bool CloseMark
+    {
+        get { return close; }
+        set { close = value; Invalidate(); }
+    }
+
+    public MarkButton()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        Cursor = Cursors.Hand;
+        BackColor = Color.FromArgb(231, 243, 248);
+        Size = new Size(34, 34);
+        TabStop = false;
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        base.OnMouseEnter(e);
+        hot = true;
+        Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        hot = false;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        if (hot)
+        {
+            using (var brush = new SolidBrush(Color.FromArgb(214, 228, 236)))
+                g.FillEllipse(brush, 1, 1, Width - 3, Height - 3);
+        }
+        using (var pen = new Pen(Color.FromArgb(45, 58, 68), 2f))
+        {
+            pen.StartCap = LineCap.Round;
+            pen.EndCap = LineCap.Round;
+            float m = Width * 0.32f;
+            if (close)
+            {
+                g.DrawLine(pen, m, m, Width - m, Height - m);
+                g.DrawLine(pen, Width - m, m, m, Height - m);
+            }
+            else
+            {
+                float y = Height * 0.62f;
+                g.DrawLine(pen, m, y, Width - m, y);
+            }
+        }
+    }
 }
 
 class CursorFactory
 {
-    static readonly int[] CursorIds = { 32512, 32649, 32513, 32650 };
-
-    public static void Apply(string style, int size)
+    public static void ApplyScheme(int size)
     {
         if (size < 16) size = 16;
         if (size > 128) size = 128;
-        for (int i = 0; i < CursorIds.Length; i++)
-        {
-            IntPtr cur = Make(style, size);
-            if (cur == IntPtr.Zero) continue;
-            if (!SetSystemCursor(cur, CursorIds[i])) DestroyCursor(cur);
-        }
+        Set(32512, "arrow", size);
+        Set(32513, "ibeam", size);
+        Set(32514, "wait", size);
+        Set(32515, "cross", size);
+        Set(32516, "arrow", size);
+        Set(32642, "nwse", size);
+        Set(32643, "nesw", size);
+        Set(32644, "we", size);
+        Set(32645, "ns", size);
+        Set(32646, "move", size);
+        Set(32648, "no", size);
+        Set(32649, "hand", size);
+        Set(32650, "arrow", size);
+        Set(32651, "arrow", size);
+    }
+
+    static void Set(int id, string style, int size)
+    {
+        IntPtr cur = Make(style, size);
+        if (cur == IntPtr.Zero) return;
+        if (!SetSystemCursor(cur, id)) DestroyCursor(cur);
     }
 
     public static void Restore()
@@ -1151,10 +2903,13 @@ class CursorFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
             float s = size / 32f;
-            if (style == "hand") DrawHand(g, s, out hx, out hy);
+            if (style == "hand") DrawHand(g, size, out hx, out hy);
             else if (style == "cross") DrawCross(g, size, out hx, out hy);
             else if (style == "ibeam") DrawIBeam(g, size, out hx, out hy);
-            else if (style == "dot") DrawDot(g, size, out hx, out hy);
+            else if (style == "wait") DrawWait(g, size, out hx, out hy);
+            else if (style == "no") DrawNo(g, size, out hx, out hy);
+            else if (style == "we" || style == "ns" || style == "nwse" || style == "nesw" || style == "move")
+                DrawSize(g, size, style, out hx, out hy);
             else DrawArrow(g, s, out hx, out hy);
             return FromBitmap(bmp, hx, hy);
         }
@@ -1181,51 +2936,170 @@ class CursorFactory
         hy = Math.Max(1, (int)s);
     }
 
-    static void DrawHand(Graphics g, float s, out int hx, out int hy)
+    static void DrawHand(Graphics g, int size, out int hx, out int hy)
     {
+        float u = size / 32f;
+        PointF[] pts = {
+            new PointF(11 * u, 1 * u),
+            new PointF(16 * u, 1 * u),
+            new PointF(16 * u, 12 * u),
+            new PointF(20 * u, 10 * u),
+            new PointF(22 * u, 14 * u),
+            new PointF(22 * u, 18 * u),
+            new PointF(26 * u, 16 * u),
+            new PointF(28 * u, 21 * u),
+            new PointF(23 * u, 30 * u),
+            new PointF(8 * u, 30 * u),
+            new PointF(5 * u, 24 * u),
+            new PointF(8 * u, 18 * u),
+            new PointF(11 * u, 18 * u)
+        };
         using (var fill = new SolidBrush(Color.White))
-        using (var pen = new Pen(Color.Black, Math.Max(1.2f, s)))
+        using (var pen = new Pen(Color.Black, Math.Max(1.2f, u * 1.15f)))
         {
-            g.FillEllipse(fill, 10 * s, 14 * s, 16 * s, 14 * s);
-            g.DrawEllipse(pen, 10 * s, 14 * s, 16 * s, 14 * s);
-            g.FillRectangle(fill, 16 * s, 4 * s, 6 * s, 16 * s);
-            g.DrawRectangle(pen, 16 * s, 4 * s, 6 * s, 16 * s);
+            pen.LineJoin = LineJoin.Round;
+            g.FillPolygon(fill, pts);
+            g.DrawPolygon(pen, pts);
         }
-        hx = (int)(19 * s);
-        hy = (int)(4 * s);
+        hx = Math.Max(1, (int)(13.5f * u));
+        hy = Math.Max(1, (int)u);
+        if (hx >= size) hx = size - 1;
+        if (hy >= size) hy = size - 1;
     }
 
     static void DrawCross(Graphics g, int size, out int hx, out int hy)
     {
-        float t = Math.Max(2f, size / 10f);
-        using (var pen = new Pen(Color.White, t))
-        {
-            pen.StartCap = LineCap.Round;
-            pen.EndCap = LineCap.Round;
-            g.DrawLine(pen, size / 2f, 2, size / 2f, size - 2);
-            g.DrawLine(pen, 2, size / 2f, size - 2, size / 2f);
-        }
-        using (var pen = new Pen(Color.Black, Math.Max(1f, t * 0.35f)))
-        {
-            g.DrawLine(pen, size / 2f, 2, size / 2f, size - 2);
-            g.DrawLine(pen, 2, size / 2f, size - 2, size / 2f);
-        }
+        float t = Math.Max(2.2f, size / 10f);
+        StrokeWhite(g, t, size / 2f, 2, size / 2f, size - 2);
+        StrokeWhite(g, t, 2, size / 2f, size - 2, size / 2f);
         hx = size / 2;
         hy = size / 2;
     }
 
     static void DrawIBeam(Graphics g, int size, out int hx, out int hy)
     {
+        float t = Math.Max(2.2f, size / 9f);
+        float x = size / 2f;
+        float arm = size * 0.28f;
+        float top = 3f;
+        float bottom = size - 3f;
+        StrokeWhite(g, t, x, top, x, bottom);
+        StrokeWhite(g, t, x - arm, top, x + arm, top);
+        StrokeWhite(g, t, x - arm, bottom, x + arm, bottom);
+        hx = size / 2;
+        hy = size / 2;
+    }
+
+    static void StrokeWhite(Graphics g, float width, float x1, float y1, float x2, float y2)
+    {
+        float edge = Math.Max(1.2f, width * 0.5f);
+        using (var outline = new Pen(Color.Black, width + edge * 2f))
+        using (var ink = new Pen(Color.White, width))
+        {
+            outline.StartCap = LineCap.Round;
+            outline.EndCap = LineCap.Round;
+            ink.StartCap = LineCap.Round;
+            ink.EndCap = LineCap.Round;
+            g.DrawLine(outline, x1, y1, x2, y2);
+            g.DrawLine(ink, x1, y1, x2, y2);
+        }
+    }
+
+    static void DrawWait(Graphics g, int size, out int hx, out int hy)
+    {
         float t = Math.Max(2f, size / 14f);
+        using (var fill = new SolidBrush(Color.White))
         using (var pen = new Pen(Color.Black, t))
         {
-            float x = size / 2f;
-            g.DrawLine(pen, x, 3, x, size - 3);
-            g.DrawLine(pen, x - size * 0.28f, 3, x + size * 0.28f, 3);
-            g.DrawLine(pen, x - size * 0.28f, size - 3, x + size * 0.28f, size - 3);
+            PointF[] top = {
+                new PointF(size * 0.28f, size * 0.12f),
+                new PointF(size * 0.72f, size * 0.12f),
+                new PointF(size * 0.5f, size * 0.48f)
+            };
+            PointF[] bottom = {
+                new PointF(size * 0.5f, size * 0.52f),
+                new PointF(size * 0.72f, size * 0.88f),
+                new PointF(size * 0.28f, size * 0.88f)
+            };
+            g.FillPolygon(fill, top);
+            g.FillPolygon(fill, bottom);
+            g.DrawPolygon(pen, top);
+            g.DrawPolygon(pen, bottom);
         }
         hx = size / 2;
         hy = size / 2;
+    }
+
+    static void DrawNo(Graphics g, int size, out int hx, out int hy)
+    {
+        float m = size * 0.18f;
+        float d = size - m * 2f;
+        float t = Math.Max(2.2f, size / 12f);
+        float edge = Math.Max(1.2f, t * 0.5f);
+        using (var outline = new Pen(Color.Black, t + edge * 2f))
+        using (var ink = new Pen(Color.White, t))
+        {
+            outline.StartCap = LineCap.Round;
+            outline.EndCap = LineCap.Round;
+            ink.StartCap = LineCap.Round;
+            ink.EndCap = LineCap.Round;
+            g.DrawEllipse(outline, m, m, d, d);
+            g.DrawLine(outline, m + d * 0.2f, m + d * 0.8f, m + d * 0.8f, m + d * 0.2f);
+            g.DrawEllipse(ink, m, m, d, d);
+            g.DrawLine(ink, m + d * 0.2f, m + d * 0.8f, m + d * 0.8f, m + d * 0.2f);
+        }
+        hx = size / 2;
+        hy = size / 2;
+    }
+
+    static void DrawSize(Graphics g, int size, string kind, out int hx, out int hy)
+    {
+        float m = size * 0.08f;
+        float c = size / 2f;
+        float head = size * 0.24f;
+        float shaft = Math.Max(1.5f, size * 0.07f);
+        if (kind == "we" || kind == "move")
+            DrawDoubleArrow(g, m, c, size - m, c, head, shaft);
+        if (kind == "ns" || kind == "move")
+            DrawDoubleArrow(g, c, m, c, size - m, head, shaft);
+        if (kind == "nwse")
+            DrawDoubleArrow(g, m, m, size - m, size - m, head, shaft);
+        if (kind == "nesw")
+            DrawDoubleArrow(g, size - m, m, m, size - m, head, shaft);
+        hx = size / 2;
+        hy = size / 2;
+    }
+
+    static void DrawDoubleArrow(Graphics g, float x1, float y1, float x2, float y2, float head, float shaft)
+    {
+        float dx = x2 - x1;
+        float dy = y2 - y1;
+        float len = (float)Math.Sqrt(dx * dx + dy * dy);
+        if (len < 1f) return;
+        dx /= len;
+        dy /= len;
+        float px = -dy;
+        float py = dx;
+        if (head > len * 0.42f) head = len * 0.42f;
+        float hw = head * 0.78f;
+        PointF[] pts = {
+            new PointF(x1, y1),
+            new PointF(x1 + dx * head + px * hw, y1 + dy * head + py * hw),
+            new PointF(x1 + dx * head + px * shaft, y1 + dy * head + py * shaft),
+            new PointF(x2 - dx * head + px * shaft, y2 - dy * head + py * shaft),
+            new PointF(x2 - dx * head + px * hw, y2 - dy * head + py * hw),
+            new PointF(x2, y2),
+            new PointF(x2 - dx * head - px * hw, y2 - dy * head - py * hw),
+            new PointF(x2 - dx * head - px * shaft, y2 - dy * head - py * shaft),
+            new PointF(x1 + dx * head - px * shaft, y1 + dy * head - py * shaft),
+            new PointF(x1 + dx * head - px * hw, y1 + dy * head - py * hw)
+        };
+        g.FillPolygon(Brushes.White, pts);
+        using (var pen = new Pen(Color.Black, Math.Max(1f, shaft * 0.45f)))
+        {
+            pen.LineJoin = LineJoin.Round;
+            g.DrawPolygon(pen, pts);
+        }
     }
 
     static void DrawDot(Graphics g, int size, out int hx, out int hy)
@@ -1284,4 +3158,115 @@ class CursorFactory
 
     [DllImport("gdi32.dll")]
     static extern bool DeleteObject(IntPtr hObject);
+}
+
+static class UpdateClient
+{
+    const string Latest = "https://api.github.com/repos/wei-ei-ei/coldy-mouse-pendant/releases/latest";
+
+    public static bool TryGetNewer(string current, out string tag, out string url)
+    {
+        tag = null;
+        url = null;
+        EnsureTls();
+        string json;
+        using (var client = new WebClient())
+        {
+            client.Headers[HttpRequestHeader.UserAgent] = "Coldy";
+            json = client.DownloadString(Latest);
+        }
+        tag = JsonString(json, "tag_name", 0);
+        if (tag == null || tag.Length == 0) return false;
+        if (CompareVersions(tag, current) <= 0) return false;
+        url = FindZip(json);
+        return url != null;
+    }
+
+    public static void Download(string url, string path)
+    {
+        EnsureTls();
+        using (var client = new WebClient())
+        {
+            client.Headers[HttpRequestHeader.UserAgent] = "Coldy";
+            client.DownloadFile(url, path);
+        }
+    }
+
+    public static string PayloadRoot(string unpacked)
+    {
+        if (File.Exists(Path.Combine(unpacked, "Coldy.exe"))) return unpacked;
+        string[] dirs = Directory.GetDirectories(unpacked);
+        if (dirs.Length == 1 && File.Exists(Path.Combine(dirs[0], "Coldy.exe"))) return dirs[0];
+        return unpacked;
+    }
+
+    static void EnsureTls()
+    {
+        try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; }
+        catch { }
+    }
+
+    static string FindZip(string json)
+    {
+        string found = null;
+        int from = 0;
+        while (from < json.Length)
+        {
+            string value = JsonString(json, "browser_download_url", from);
+            if (value == null) break;
+            int at = json.IndexOf(value, from);
+            from = at < 0 ? json.Length : at + value.Length;
+            value = value.Replace("\\/", "/");
+            if (!value.EndsWith(".zip")) continue;
+            if (value.IndexOf("/wei-ei-ei/coldy-mouse-pendant/") < 0) continue;
+            found = value;
+            if (value.IndexOf("win") >= 0) return value;
+        }
+        return found;
+    }
+
+    static string JsonString(string json, string key, int from)
+    {
+        string token = "\"" + key + "\"";
+        int at = json.IndexOf(token, from);
+        if (at < 0) return null;
+        int quote = json.IndexOf('"', at + token.Length);
+        if (quote < 0) return null;
+        int end = json.IndexOf('"', quote + 1);
+        if (end < 0) return null;
+        return json.Substring(quote + 1, end - quote - 1);
+    }
+
+    static int CompareVersions(string remote, string local)
+    {
+        int[] left = ParseVersion(remote);
+        int[] right = ParseVersion(local);
+        for (int i = 0; i < 3; i++)
+        {
+            if (left[i] == right[i]) continue;
+            return left[i] > right[i] ? 1 : -1;
+        }
+        return 0;
+    }
+
+    static int[] ParseVersion(string text)
+    {
+        int[] version = new int[3];
+        if (text == null) return version;
+        if (text.StartsWith("v") || text.StartsWith("V")) text = text.Substring(1);
+        string[] parts = text.Split('.');
+        for (int i = 0; i < parts.Length && i < 3; i++)
+        {
+            string digits = "";
+            for (int c = 0; c < parts[i].Length; c++)
+            {
+                char ch = parts[i][c];
+                if (ch < '0' || ch > '9') break;
+                digits += ch;
+            }
+            int n;
+            if (digits.Length > 0 && int.TryParse(digits, out n)) version[i] = n;
+        }
+        return version;
+    }
 }
