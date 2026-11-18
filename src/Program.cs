@@ -17,7 +17,7 @@ using Microsoft.Win32;
 // The pendant itself is a transparent, topmost, click-through layered window.
 class Program
 {
-    public const string AppVersion = "1.6.0";
+    public const string AppVersion = "1.6.1";
     static EventWaitHandle showEvent;
 
     [STAThread]
@@ -2268,13 +2268,10 @@ class SettingsForm : Form
             dialog.Font = new Font("Microsoft YaHei UI", 9f);
             dialog.BackColor = Color.White;
             dialog.TopMost = true;
-            string notes = "v1.6.0 更新\r\n\r\n"
-                + "绳子长度的范围加长到 0–1000。\r\n"
-                + "添加了新的形态。\r\n"
-                + "人物大小只留一个滑块，三个形态的显示高度一致。\r\n"
-                + "修复了系统光标和跟随场景光标绳子挂点不一致的问题。\r\n"
-                + "修复了切换形态后下拉框一直保持蓝色的问题。\r\n"
-                + "名字固定为 Coldy，左上角为 Coldy 的 logo。";
+            string notes = "v1.6.1 更新\r\n\r\n"
+                + "修复了形态下拉框无法选择选项的问题。\r\n"
+                + "修复了颜色盘的自定义颜色无法保存的问题。\r\n"
+                + "修复了「规定自定义颜色」按钮一直是灰色的问题。";
             string[] lines = notes.Split('\n');
             Size measured;
             int lineH;
