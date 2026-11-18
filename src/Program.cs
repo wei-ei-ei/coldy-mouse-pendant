@@ -1498,6 +1498,7 @@ class SettingsForm : Form
     bool updating;
     string settingsPath;
     Color ropeColor = Color.FromArgb(55, 55, 62);
+    readonly int[] customColors = DefaultCustomColors();
     int boxHeight = 34;
     static readonly Color Ice = Color.FromArgb(231, 243, 248);
     static readonly Color Ink = Color.FromArgb(45, 58, 68);
@@ -1837,14 +1838,43 @@ class SettingsForm : Form
         using (var dialog = new ColorDialog())
         {
             dialog.AllowFullOpen = true;
-            dialog.FullOpen = true;
+            dialog.FullOpen = false;
             dialog.AnyColor = true;
             dialog.SolidColorOnly = false;
             dialog.Color = ropeColor;
-            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            dialog.CustomColors = (int[])customColors.Clone();
+            DialogResult result = dialog.ShowDialog(this);
+            if (dialog.CustomColors != null && dialog.CustomColors.Length > 0)
+            {
+                int count = Math.Min(customColors.Length, dialog.CustomColors.Length);
+                for (int i = 0; i < count; i++) customColors[i] = dialog.CustomColors[i];
+            }
+            if (result != DialogResult.OK)
+            {
+                SaveSettings();
+                return;
+            }
             ropeColor = dialog.Color;
             ShowRopeColor();
             ApplyAll(false);
+        }
+    }
+
+    static int[] DefaultCustomColors()
+    {
+        int[] colors = new int[16];
+        for (int i = 0; i < colors.Length; i++) colors[i] = 0xFFFFFF;
+        return colors;
+    }
+
+    void ParseCustomColors(string val)
+    {
+        if (val == null) return;
+        string[] parts = val.Split(',');
+        for (int i = 0; i < parts.Length && i < customColors.Length; i++)
+        {
+            int color;
+            if (int.TryParse(parts[i].Trim(), out color) && color >= 0) customColors[i] = color;
         }
     }
 
@@ -2516,6 +2546,7 @@ class SettingsForm : Form
             int n;
             if (key == "rope") SetBar(ropeBar, val);
             else if (key == "ropeColor") ropeColor = ParseColor(val);
+            else if (key == "customColors") ParseCustomColors(val);
             else if (key == "size") SetBar(sizeBar, val);
             else if (key == "cursorSize") SetBar(cursorSizeBar, val);
             else if (key == "cursor") SelectCursor(val);
@@ -2610,8 +2641,15 @@ class SettingsForm : Form
         string[] styles = { "system", "scheme" };
         int index = cursorBox.SelectedIndex;
         if (index < 0 || index >= styles.Length) index = 0;
+        StringBuilder colors = new StringBuilder();
+        for (int i = 0; i < customColors.Length; i++)
+        {
+            if (i > 0) colors.Append(',');
+            colors.Append(customColors[i]);
+        }
         string text = "rope=" + ropeBar.Value + "\r\n"
             + "ropeColor=" + ropeColor.R + "," + ropeColor.G + "," + ropeColor.B + "\r\n"
+            + "customColors=" + colors + "\r\n"
             + "size=" + sizeBar.Value + "\r\n"
             + "form=" + FormKey(formBox.SelectedIndex) + "\r\n"
             + "cursor=" + styles[index] + "\r\n"
