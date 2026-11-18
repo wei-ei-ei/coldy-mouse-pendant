@@ -2,8 +2,6 @@
   <br>
   <img src="assets/coldy-logo.png" alt="COLDY" width="320"/>
   <br>
-  <img src="assets/coldy-avatar.png" alt="Coldy" width="120"/>
-  <br>
   <span>Coldy 的 Windows 鼠标挂件。角色悬挂于光标下方，绳索随指针运动弯曲。</span>
   <br>
 </p>
