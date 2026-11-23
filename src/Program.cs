@@ -4410,6 +4410,9 @@ static class UpdateClient
             client.Headers[HttpRequestHeader.UserAgent] = "Coldy";
             json = client.DownloadString(Latest);
         }
+        // Update mode: only a published (non-draft, non-prerelease) GitHub release
+        // newer than the running version may trigger an update; commits/tags never do.
+        if (JsonBool(json, "draft") || JsonBool(json, "prerelease")) return false;
         tag = JsonString(json, "tag_name", 0);
         if (tag == null || tag.Length == 0) return false;
         if (CompareVersions(tag, current) <= 0) return false;
@@ -4470,6 +4473,18 @@ static class UpdateClient
         int end = json.IndexOf('"', quote + 1);
         if (end < 0) return null;
         return json.Substring(quote + 1, end - quote - 1);
+    }
+
+    static bool JsonBool(string json, string key)
+    {
+        string token = "\"" + key + "\"";
+        int at = json.IndexOf(token, 0);
+        if (at < 0) return false;
+        int colon = json.IndexOf(':', at + token.Length);
+        if (colon < 0) return false;
+        int i = colon + 1;
+        while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
+        return i + 4 <= json.Length && json.Substring(i, 4) == "true";
     }
 
     static int CompareVersions(string remote, string local)
