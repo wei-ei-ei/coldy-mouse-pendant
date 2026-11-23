@@ -18,7 +18,7 @@ using Microsoft.Win32;
 // The pendant itself is a transparent, topmost, click-through layered window.
 class Program
 {
-    public const string AppVersion = "1.6.1";
+    public const string AppVersion = "1.7.0";
     // One-time changelog revision, decoupled from AppVersion so showing the
     // update log never bumps the version nor triggers the auto-update offer.
     public const string NotesRev = "kge-6";
