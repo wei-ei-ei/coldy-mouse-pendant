@@ -30,15 +30,23 @@
 
 本仓库只包含 Coldy 这一个角色。形象来自《Colder》MV 中的雪人：圆身、条纹围巾、头顶金属勺、右侧彩色线缆，以及一只闭合的眼睛和一只蓝色发光眼睛。
 
-## v1.6.1
+## v1.7.0
 
-- 修复了形态下拉框无法选择选项的问题。
-- 修复了颜色盘的自定义颜色无法保存的问题。
-- 修复了「规定自定义颜色」按钮一直是灰色的问题。
+- 移除 cocococo「k歌」唱歌形态：下拉仅形态1/2，不再加载 form4。
+- 新增四档光标方案（系统默认 / 冰川 / 像素 / 霜降）。
+- 统一光标尺寸接口；修复像素光标大小无法调整的问题。
+- 自动更新仅在仓库发布更高版本正式 release 时触发。
+
+---
+
+- Removed the cocococo singing form: the form dropdown now offers only Form 1/2 and form4 is no longer loaded.
+- Added four cursor schemes (System default / Ice / Pixel / Frost's Descent).
+- Unified the cursor sizing API; fixed pixel cursors ignoring the size setting.
+- Auto-update now triggers only when a newer published release exists in the repository.
 
 ## 安装
 
-发布包可直接运行，无需编译环境。当前版本是 [v1.6.1](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.6.1)：[Coldy-1.6.1-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.6.1/Coldy-1.6.1-win.zip)。压缩包内是 `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif`、`assets/coldy-form4.gif`、`assets/coldy-logo.png`。
+发布包可直接运行，无需编译环境。当前版本是 [v1.7.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.7.0)：[Coldy-1.7.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.7.0/Coldy-1.7.0-win.zip)。压缩包内是 `Coldy.exe`、`Coldy.exe.config`、`assets/coldy.png`、`assets/coldy-form2.gif`、`assets/coldy-form4.gif`、`assets/coldy-logo.png`。
 
 1. 下载并解压发布包，保持目录结构不变。
 2. 运行 `Coldy.exe`。
@@ -59,7 +67,7 @@
 | --- | --- | --- |
 | 操作系统 | Windows 7 SP1 及以上 | 覆盖 Windows 8、8.1、10、11 |
 | 运行时 | .NET Framework 4.0 及以上 | 4.5 至 4.8 均可。Windows 10 1903 与 Windows 11 已内置 4.8 |
-| 发布包 | v1.6.1 | 无安装程序 |
+| 发布包 | v1.7.0 | 无安装程序 |
 
 未安装 .NET Framework 4 的系统，请先安装 [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48)。
 

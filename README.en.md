@@ -30,15 +30,16 @@
 
 This repository contains only one character, Coldy. The design comes from the snowman in the 《Colder》 music video: a round body, a striped scarf, a metal spoon on the head, a colorful cable on the right side, one closed eye, and one glowing blue eye.
 
-## v1.6.1
+## v1.7.0
 
-- Fixed the form dropdown so an option can actually be selected.
-- Fixed custom color swatches in the color dialog not being saved.
-- Fixed the "Define Custom Colors" button staying grayed out.
+- Removed the cocococo singing form: the form dropdown now offers only Form 1/2 and form4 is no longer loaded.
+- Added four cursor schemes (System default / Ice / Pixel / Frost's Descent).
+- Unified the cursor sizing API; fixed pixel cursors ignoring the size setting.
+- Auto-update now triggers only when a newer published release exists in the repository.
 
 ## Install
 
-The release package runs out of the box; no build environment is needed. The current version is [v1.6.1](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.6.1): [Coldy-1.6.1-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.6.1/Coldy-1.6.1-win.zip). The archive contains `Coldy.exe`, `Coldy.exe.config`, `assets/coldy.png`, `assets/coldy-form2.gif`, `assets/coldy-form4.gif`, and `assets/coldy-logo.png`.
+The release package runs out of the box; no build environment is needed. The current version is [v1.7.0](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/tag/v1.7.0): [Coldy-1.7.0-win.zip](https://github.com/wei-ei-ei/coldy-mouse-pendant/releases/download/v1.7.0/Coldy-1.7.0-win.zip). The archive contains `Coldy.exe`, `Coldy.exe.config`, `assets/coldy.png`, `assets/coldy-form2.gif`, `assets/coldy-form4.gif`, and `assets/coldy-logo.png`.
 
 1. Download the release package and extract it, keeping the directory layout intact.
 2. Run `Coldy.exe`.
@@ -59,7 +60,7 @@ The build targets AnyCPU and runs on 32-bit and 64-bit Windows. The process decl
 | --- | --- | --- |
 | Operating system | Windows 7 SP1 and later | Covers Windows 8, 8.1, 10, and 11 |
 | Runtime | .NET Framework 4.0+ | 4.5 through 4.8 all work. Windows 10 1903 and Windows 11 ship with 4.8 built in |
-| Release package | v1.6.1 | No installer |
+| Release package | v1.7.0 | No installer |
 
 On systems without .NET Framework 4, install the [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48) runtime first.
 
