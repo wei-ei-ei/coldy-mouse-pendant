@@ -21,7 +21,7 @@ class Program
     public const string AppVersion = "1.6.1";
     // One-time changelog revision, decoupled from AppVersion so showing the
     // update log never bumps the version nor triggers the auto-update offer.
-    public const string NotesRev = "kge-5";
+    public const string NotesRev = "kge-6";
     static EventWaitHandle showEvent;
 
     [STAThread]
@@ -2299,7 +2299,7 @@ class SettingsForm : Form
             int rightW = Math.Max(markSize + 8 + headW, measured.Width);
             int clientW = 12 + imgSize + 18 + rightW + 14;
             int contentTop = titleH + 12;
-            int rightHeadH = Math.Max(markSize, headH);
+            int rightHeadH = Math.Max(24, headH + 4);
             int contentH = Math.Max(imgSize, rightHeadH + 8 + measured.Height);
             int rightX = 12 + imgSize + 18;
             int footerY = contentTop + contentH + 12;
@@ -2342,19 +2342,23 @@ class SettingsForm : Form
             icon.BackColor = Color.White;
             icon.SetBounds(12, contentTop + (contentH - imgSize) / 2, imgSize, imgSize);
 
-            var mark = new PictureBox();
-            mark.Image = SystemIcons.Information.ToBitmap();
-            mark.SizeMode = PictureBoxSizeMode.Zoom;
-            mark.BackColor = Color.White;
-            mark.SetBounds(rightX, contentTop + (rightHeadH - markSize) / 2, markSize, markSize);
-
-            var head = new Label();
-            head.Font = headFont;
-            head.Text = heading;
-            head.BackColor = Color.White;
-            head.ForeColor = Color.Black;
-            head.AutoSize = true;
-            head.SetBounds(rightX + markSize + 8, contentTop + (rightHeadH - head.PreferredHeight) / 2, headW + 2, head.PreferredHeight);
+            // Single owner-drawn heading row: icon and title share one vertical
+            // centre line, so they can never sit off-axis from each other.
+            var headRow = new Panel();
+            headRow.BackColor = Color.White;
+            headRow.SetBounds(rightX, contentTop, rightW, rightHeadH);
+            headRow.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                e.Graphics.DrawIcon(SystemIcons.Information,
+                    new Rectangle(0, (rightHeadH - markSize) / 2, markSize, markSize));
+                using (var sf = new StringFormat())
+                {
+                    sf.Alignment = StringAlignment.Near;
+                    sf.LineAlignment = StringAlignment.Center;
+                    e.Graphics.DrawString(heading, headFont, Brushes.Black,
+                        new RectangleF(markSize + 8, 0, rightW - markSize - 8, rightHeadH), sf);
+                }
+            };
 
             var text = new Label();
             text.BackColor = Color.White;
@@ -2375,8 +2379,7 @@ class SettingsForm : Form
 
             dialog.ClientSize = new Size(clientW, footerY + footerH);
             dialog.Controls.Add(icon);
-            dialog.Controls.Add(mark);
-            dialog.Controls.Add(head);
+            dialog.Controls.Add(headRow);
             dialog.Controls.Add(text);
             dialog.Controls.Add(title);
             dialog.Controls.Add(footer);
