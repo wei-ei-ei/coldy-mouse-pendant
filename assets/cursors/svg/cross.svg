@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+<!-- COLDY Glacier cursors · cross · design source, mirrors CursorFactory in src/Program.cs -->
+<defs><linearGradient id="ice" x1="0" y1="0" x2="0.42" y2="0.91"><stop offset="0" stop-color="#F8FEFF"/><stop offset="0.45" stop-color="#D8F3FF"/><stop offset="1" stop-color="#9EDCF5"/></linearGradient></defs><path d="M16 3.4 L16 11.4 M16 20.6 L16 28.6 M3.4 16 L11.4 16 M20.6 16 L28.6 16" fill="none" stroke="#FFFFFF" stroke-width="5.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 3.4 L16 11.4 M16 20.6 L16 28.6 M3.4 16 L11.4 16 M20.6 16 L28.6 16" fill="none" stroke="#1F2838" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="16" r="3.5" fill="#FFFFFF"/><circle cx="16" cy="16" r="2.3" fill="#1F2838"/><circle cx="16" cy="16" r="1.4" fill="url(#ice)"/>
+</svg>

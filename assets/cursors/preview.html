@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>COLDY · 光标交互预览（Cold / 像素）</title>
+<style>
+  :root {
+    --ink: #1F2838;
+    --dim: #6E7C90;
+    --ice: #6FCBEF;
+    --ice-lo: #2E9BC9;
+    --page: #EEF4FA;
+    --card: #FFFFFF;
+    --line: #D8E2EE;
+    --stage: #F7FAFD;
+    --stage-text: #1F2838;
+  }
+  body[data-bg="dark"] { --stage: #1E2430; --stage-text: #E8EEF6; }
+  body[data-bg="ice"]  { --stage: #3E79C0; --stage-text: #FFFFFF; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--page); color: var(--ink);
+    padding: 32px 28px 64px; max-width: 1280px; margin: 0 auto;
+  }
+  header { margin-bottom: 24px; }
+  .brand { font-size: 30px; font-weight: 800; letter-spacing: 1px; }
+  .brand span {
+    display: inline-block; margin-left: 12px; font-size: 13px; font-weight: 700;
+    color: #fff; background: linear-gradient(120deg, #9EDCF5, #4FB0DC);
+    padding: 4px 10px; border-radius: 999px; vertical-align: 4px; letter-spacing: 2px;
+  }
+  .sub { color: var(--dim); margin-top: 8px; font-size: 14px; line-height: 1.7; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 20px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px 18px; margin-bottom: 22px; font-size: 14px;
+  }
+  .controls label { display: flex; align-items: center; gap: 10px; }
+  input[type="range"] { width: 220px; accent-color: var(--ice-lo); }
+  #sizeVal { font-weight: 700; min-width: 34px; display: inline-block; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .seg button {
+    border: 0; background: transparent; padding: 7px 16px; font-size: 13px;
+    cursor: pointer; color: var(--dim); font-family: inherit;
+  }
+  .seg button.on { background: var(--ink); color: #fff; }
+  .chk input { accent-color: var(--ice-lo); }
+  h2 { font-size: 18px; margin: 30px 0 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .stage {
+    background: var(--stage); height: 170px; display: flex; align-items: center; justify-content: center;
+    transition: background .2s;
+  }
+  .imgwrap { position: relative; }
+  .imgwrap img { display: block; }
+  body[data-scheme="pixel"] .imgwrap img { image-rendering: pixelated; }
+  .hot {
+    position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; display: none;
+    pointer-events: none;
+  }
+  .hot::before, .hot::after { content: ""; position: absolute; background: #E2574B; }
+  .hot::before { left: 5px; top: 0; width: 1px; height: 11px; }
+  .hot::after { left: 0; top: 5px; width: 11px; height: 1px; }
+  body.show-hot .hot { display: block; }
+  .meta { padding: 10px 14px 12px; border-top: 1px solid var(--line); }
+  .meta b { font-size: 14px; }
+  .meta span { color: var(--dim); font-size: 12px; margin-left: 8px; }
+  .meta code { display: block; color: var(--dim); font-size: 11px; margin-top: 4px; font-family: Consolas, monospace; }
+  .playgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .zone {
+    background: var(--stage); color: var(--stage-text); border-radius: 14px;
+    padding: 16px 18px; min-height: 120px; font-size: 14px; transition: background .2s;
+    border: 1px solid var(--line);
+  }
+  .zone h3 { font-size: 14px; margin-bottom: 8px; }
+  .zone p { line-height: 1.7; }
+  .zone a { color: var(--ice); }
+  body[data-bg="light"] .zone a { color: var(--ice-lo); }
+  .zone button {
+    font-family: inherit; font-size: 13px; padding: 6px 16px; border-radius: 8px;
+    border: 1px solid var(--ice-lo); background: var(--ice); color: #fff; cursor: inherit;
+  }
+  .zone button[disabled] { opacity: .5; cursor: inherit; }
+  .zone .text { user-select: text; }
+  .rbox { position: relative; height: 110px; margin-top: 6px; border: 2px dashed currentColor; border-radius: 8px; opacity: .9; }
+  .rbox span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: .7; }
+  .rbox i { position: absolute; }
+  .rbox .e.n { top: -7px; left: 14px; right: 14px; height: 14px; }
+  .rbox .e.s { bottom: -7px; left: 14px; right: 14px; height: 14px; }
+  .rbox .e.w { left: -7px; top: 14px; bottom: 14px; width: 14px; }
+  .rbox .e.e { right: -7px; top: 14px; bottom: 14px; width: 14px; }
+  .rbox .c { width: 16px; height: 16px; }
+  .rbox .c.nw { top: -8px; left: -8px; }
+  .rbox .c.ne { top: -8px; right: -8px; }
+  .rbox .c.sw { bottom: -8px; left: -8px; }
+  .rbox .c.se { bottom: -8px; right: -8px; }
+  .sheet img { width: 100%; border-radius: 14px; border: 1px solid var(--line); display: block; }
+  .tokens { display: flex; flex-wrap: wrap; gap: 12px; }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 12px; }
+  .chip i { display: block; width: 46px; height: 26px; border-radius: 6px; border: 1px solid rgba(31,40,56,.15); margin-bottom: 6px; }
+  .chip b { font-family: Consolas, monospace; }
+  .chip span { color: var(--dim); display: block; margin-top: 2px; }
+  footer { margin-top: 36px; color: var(--dim); font-size: 13px; line-height: 1.9; }
+  footer a { color: var(--ice-lo); }
+  footer code { font-family: Consolas, monospace; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: 12px; }
+  .note { font-size: 12px; color: var(--dim); margin-top: 10px; }
+</style>
+</head>
+<body data-bg="light" data-scheme="glacier">
+<header>
+  <div class="brand">COLDY<span id="brandTag">ICE CURSORS</span></div>
+  <p class="sub">Coldy 光标交互预览 · 三套方案：<b>Ice</b>（冰川设计语言，原创矢量）、<b>Pixel</b>（作者 线框xiankuang 的动态像素光标）与<b>Frost's Descent</b>（霜降，IP 材质形状光标，CursorFactory.RenderFelt 生产代码渲染）。<br>把鼠标移进任意卡片或试用区即可实际体验；拖动滑块调整大小（16–128px，与软件「光标大小」一致）。</p>
+</header>
+
+<div class="controls">
+  <div class="seg" id="schemeSeg">
+    <button data-scheme="glacier" class="on">Ice</button><button data-scheme="pixel">Pixel</button><button data-scheme="felt">Frost's Descent</button>
+  </div>
+  <label>光标大小 <input type="range" id="size" min="16" max="128" value="32"><span><span id="sizeVal">32</span>px</span></label>
+  <div class="seg" id="bgSeg">
+    <button data-bg="light" class="on">浅色</button><button data-bg="dark">深色</button><button data-bg="ice">冰蓝</button>
+  </div>
+  <label class="chk"><input type="checkbox" id="hotspot"> 显示热区标记</label>
+</div>
+
+<h2>全部状态（14）</h2>
+<div class="grid" id="grid"></div>
+
+<h2>试用区</h2>
+<div class="playgrid">
+  <div class="zone" data-cur="arrow"><h3>普通区域</h3><p>按钮与一般界面元素。</p><p style="margin-top:8px"><button>普通按钮</button></p></div>
+  <div class="zone" data-cur="hand"><h3>链接选择</h3><p><a href="#" onclick="return false">这是一个链接</a>，悬停查看带冰蓝袖口的手型。</p></div>
+  <div class="zone" data-cur="ibeam"><h3>文本选择</h3><p class="text">这是一段可选中的文本。光标是带水晶插入标记的工字，中心点即插入位置。</p></div>
+  <div class="zone" data-cur="wait"><h3>忙碌等待</h3><p>加载中的雪花，替代旧版沙漏。</p></div>
+  <div class="zone" data-cur="busy"><h3>后台运行</h3><p>箭头 + 雪花徽章，不再复用普通箭头。</p></div>
+  <div class="zone" data-cur="help"><h3>帮助选择</h3><p>箭头 + 冰蓝问号徽章。</p></div>
+  <div class="zone" data-cur="cross"><h3>精确选择</h3><p>中心留空的十字，精确像素不被笔画埋住。</p></div>
+  <div class="zone" data-cur="no"><h3>不可用</h3><p style="margin-top:8px"><button disabled>禁用按钮</button></p></div>
+  <div class="zone" data-cur="move"><h3>移动</h3><p>四向一体箭头 + 水晶中心。</p></div>
+  <div class="zone" data-cur="up"><h3>候选选择</h3><p>竖直箭头（OCR_UP）。</p></div>
+  <div class="zone"><h3>窗口缩放</h3>
+    <div class="rbox">
+      <i class="e n" data-cur="ns"></i><i class="e s" data-cur="ns"></i>
+      <i class="e w" data-cur="we"></i><i class="e e" data-cur="we"></i>
+      <i class="c nw" data-cur="nwse"></i><i class="c ne" data-cur="nesw"></i>
+      <i class="c sw" data-cur="nesw"></i><i class="c se" data-cur="nwse"></i>
+      <span>把鼠标移到边缘和四角</span>
+    </div>
+  </div>
+</div>
+<p class="note">浏览器自定义光标上限为 128px，与软件「光标大小」上限一致；超出部分由系统缩放。</p>
+<p class="note" id="pixelNote" style="display:none">Pixel 方案在浏览器中预览为<b>动画首帧</b>（静态）；在软件内由 Windows 原生播放完整 11 帧 @ 12fps 动画，并随大小滑块最近邻缩放。</p>
+<p class="note" id="feltNote" style="display:none">Frost's Descent（霜降）方案在浏览器中预览为<b>微动效首帧</b>（静态）；在软件内由 Windows 原生播放帧循环（等待 12 帧 / 其余 8 帧 @ 12fps：雪花旋转、雪球滚动、针织拉伸、围巾结摇动、勺 glint），并随大小滑块矢量重渲染缩放。形状/纹样光标，无人物无脸。</p>
+
+<h2>全状态对照表（生产代码渲染）</h2>
+<div class="sheet"><img id="sheetImg" src="coldy-cursors-sheet.png" alt="COLDY 光标对照表"></div>
+
+<h2 id="tokensTitle">设计色板（Ice）</h2>
+<div class="tokens" id="coldTokens">
+  <div class="chip"><i style="background:#F8FEFF"></i><b>#F8FEFF</b><span>冰面高光</span></div>
+  <div class="chip"><i style="background:#D8F3FF"></i><b>#D8F3FF</b><span>冰面中间调</span></div>
+  <div class="chip"><i style="background:#9EDCF5"></i><b>#9EDCF5</b><span>冰面蓝</span></div>
+  <div class="chip"><i style="background:#1F2838"></i><b>#1F2838</b><span>极夜墨色</span></div>
+  <div class="chip"><i style="background:#E2574B"></i><b>#E2574B</b><span>围巾红（仅禁止斜杠）</span></div>
+  <div class="chip"><i style="background:#C5ECFF"></i><b>#C5ECFF</b><span>袖口冰蓝</span></div>
+  <div class="chip"><i style="background:#FFFFFF"></i><b>#FFFFFF</b><span>光晕白 / 袖口白</span></div>
+</div>
+<div class="tokens" id="feltTokens" style="display:none">
+  <div class="chip"><i style="background:#F5F7F8"></i><b>#F5F7F8</b><span>毛毡白</span></div>
+  <div class="chip"><i style="background:#5B87A6"></i><b>#5B87A6</b><span>针织蓝（围巾尾）</span></div>
+  <div class="chip"><i style="background:#9DB89A"></i><b>#9DB89A</b><span>围巾 sage 绿</span></div>
+  <div class="chip"><i style="background:#E2574B"></i><b>#E2574B</b><span>围巾红</span></div>
+  <div class="chip"><i style="background:#EFE7D8"></i><b>#EFE7D8</b><span>围巾奶油</span></div>
+  <div class="chip"><i style="background:#35C6F4"></i><b>#35C6F4</b><span>发光青（眼）</span></div>
+  <div class="chip"><i style="background:#8C98A2"></i><b>#8C98A2</b><span>镀铬勺</span></div>
+  <div class="chip"><i style="background:#1F2838"></i><b>#1F2838</b><span>极夜墨色</span></div>
+</div>
+
+<footer>
+  <b>Cold 方案调研来源</b>：
+  <a href="https://github.com/ful1e5/Bibata_Cursor">Bibata</a>（Material 风格 · MIT）·
+  <a href="https://www.michieldb.nl/other/cursors/">Posy's Improved Cursors</a>（Michiel de Boer · CC BY-NC）·
+  <a href="https://github.com/phisch/phinger-cursors">Phinger</a>（Figma 模块化部件 · CC BY-SA）·
+  <a href="https://github.com/keeferrourke/capitaine-cursors">Capitaine</a>（macOS 风格 · LGPLv3）·
+  <a href="https://github.com/ful1e5/Google_Cursor">GoogleDot</a>（GPLv3）。
+  Cold 几何为原创，仅借鉴构造原则，未复制任何参考素材。<br>
+  <b>像素方案署名</b>：动态像素光标 · 作者 <b>线框xiankuang</b> ·
+  <a href="https://space.bilibili.com/400839602">bilibili</a> ·
+  <a href="https://x.com/xiankuangxk">X</a> ·
+  <a href="https://xk-downloads.ovso.top/">更多光标</a>。
+  由简易光标制作器制作，经作者 installer 内嵌 ZIP 提取（<code>tools/extract_pixel_pack.py</code>），未运行该 exe。<br>
+  <b>再生成</b>：<code>build.bat</code> → 编译并运行 <code>tools/MakeCursorSheet.cs</code>（PNG 与双对照表）→ <code>python tools/make_cursor_svg.py</code>（SVG 设计源）。详见 <code>DESIGN.md</code>。
+</footer>
+
+<script src="png/hotspots.js"></script>
+<script>
+var STYLES = [
+  { id: "arrow", cn: "普通选择", ocr: "OCR_NORMAL · 32512", fb: "default" },
+  { id: "hand",  cn: "链接选择", ocr: "OCR_HAND · 32649", fb: "pointer" },
+  { id: "ibeam", cn: "文本选择", ocr: "OCR_IBEAM · 32513", fb: "text" },
+  { id: "wait",  cn: "忙碌等待", ocr: "OCR_WAIT · 32514", fb: "wait" },
+  { id: "busy",  cn: "后台运行", ocr: "OCR_APPSTARTING · 32650", fb: "progress" },
+  { id: "help",  cn: "帮助选择", ocr: "OCR_HELP · 32651", fb: "help" },
+  { id: "cross", cn: "精确选择", ocr: "OCR_CROSS · 32515", fb: "crosshair" },
+  { id: "no",    cn: "不可用",   ocr: "OCR_NO · 32648", fb: "not-allowed" },
+  { id: "we",    cn: "水平缩放", ocr: "OCR_SIZEWE · 32644", fb: "ew-resize" },
+  { id: "ns",    cn: "垂直缩放", ocr: "OCR_SIZENS · 32645", fb: "ns-resize" },
+  { id: "nwse",  cn: "对角缩放 ↘", ocr: "OCR_SIZENWSE · 32642", fb: "nwse-resize" },
+  { id: "nesw",  cn: "对角缩放 ↙", ocr: "OCR_SIZENESW · 32643", fb: "nesw-resize" },
+  { id: "move",  cn: "移动",     ocr: "OCR_SIZEALL · 32646", fb: "move" },
+  { id: "up",    cn: "候选选择", ocr: "OCR_UP · 32516", fb: "default" }
+];
+var FB = {};
+STYLES.forEach(function (s) { FB[s.id] = s.fb; });
+
+var size = 32;
+var scheme = "glacier";
+function bucket(s) { return s <= 32 ? 32 : s <= 64 ? 64 : 128; }
+function prefix() { return scheme === "pixel" ? "pixel-" : scheme === "felt" ? "felt-" : ""; }
+function hotTable() { return scheme === "pixel" ? COLDY_PIXEL_HOTSPOTS : scheme === "felt" ? COLDY_FELT_HOTSPOTS : COLDY_HOTSPOTS; }
+function curCss(id) {
+  var h = hotTable()[id];
+  var hx = Math.round(h.hx * size / 32), hy = Math.round(h.hy * size / 32);
+  return "url(png/" + prefix() + id + "-" + bucket(size) + ".png) " + hx + " " + hy + ", " + (FB[id] || "auto");
+}
+
+var grid = document.getElementById("grid");
+STYLES.forEach(function (s) {
+  var card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML =
+    '<div class="stage" data-cur="' + s.id + '"><div class="imgwrap">' +
+    '<img alt="' + s.id + '"><i class="hot"></i></div></div>' +
+    '<div class="meta"><b>' + s.id + '</b><span>' + s.cn + '</span><code>' + s.ocr + '</code></div>';
+  grid.appendChild(card);
+});
+
+function render() {
+  document.getElementById("sizeVal").textContent = size;
+  var b = bucket(size);
+  document.querySelectorAll("[data-cur]").forEach(function (el) {
+    el.style.cursor = curCss(el.getAttribute("data-cur"));
+  });
+  document.querySelectorAll(".card").forEach(function (card, i) {
+    var s = STYLES[i];
+    var wrap = card.querySelector(".imgwrap");
+    var img = card.querySelector("img");
+    var hot = card.querySelector(".hot");
+    var h = hotTable()[s.id];
+    wrap.style.width = size + "px";
+    wrap.style.height = size + "px";
+    img.src = "png/" + prefix() + s.id + "-" + b + ".png";
+    img.style.width = size + "px";
+    img.style.height = size + "px";
+    hot.style.left = (h.hx * size / 32) + "px";
+    hot.style.top = (h.hy * size / 32) + "px";
+  });
+}
+
+document.getElementById("size").addEventListener("input", function () {
+  size = parseInt(this.value, 10);
+  render();
+});
+document.getElementById("schemeSeg").addEventListener("click", function (e) {
+  var btn = e.target.closest("button");
+  if (!btn) return;
+  scheme = btn.getAttribute("data-scheme");
+  document.body.setAttribute("data-scheme", scheme);
+  this.querySelectorAll("button").forEach(function (x) { x.classList.remove("on"); });
+  btn.classList.add("on");
+  document.getElementById("brandTag").textContent = scheme === "pixel" ? "PIXEL CURSORS" : scheme === "felt" ? "FROST'S DESCENT" : "ICE CURSORS";
+  document.getElementById("sheetImg").src = scheme === "pixel" ? "coldy-pixel-sheet.png" : scheme === "felt" ? "coldy-felt-sheet.png" : "coldy-cursors-sheet.png";
+  document.getElementById("pixelNote").style.display = scheme === "pixel" ? "block" : "none";
+  document.getElementById("feltNote").style.display = scheme === "felt" ? "block" : "none";
+  document.getElementById("coldTokens").style.display = scheme === "felt" ? "none" : "flex";
+  document.getElementById("feltTokens").style.display = scheme === "felt" ? "flex" : "none";
+  document.getElementById("tokensTitle").textContent = scheme === "felt" ? "设计色板（Frost's Descent）" : "设计色板（Ice）";
+  render();
+});
+document.getElementById("bgSeg").addEventListener("click", function (e) {
+  var btn = e.target.closest("button");
+  if (!btn) return;
+  document.body.setAttribute("data-bg", btn.getAttribute("data-bg"));
+  this.querySelectorAll("button").forEach(function (x) { x.classList.remove("on"); });
+  btn.classList.add("on");
+});
+document.getElementById("hotspot").addEventListener("change", function () {
+  document.body.classList.toggle("show-hot", this.checked);
+});
+render();
+</script>
+</body>
+</html>
