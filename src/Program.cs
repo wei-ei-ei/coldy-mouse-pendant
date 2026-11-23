@@ -21,7 +21,7 @@ class Program
     public const string AppVersion = "1.6.1";
     // One-time changelog revision, decoupled from AppVersion so showing the
     // update log never bumps the version nor triggers the auto-update offer.
-    public const string NotesRev = "kge-3";
+    public const string NotesRev = "kge-5";
     static EventWaitHandle showEvent;
 
     [STAThread]
@@ -2248,21 +2248,25 @@ class SettingsForm : Form
             dialog.Font = new Font("Microsoft YaHei UI", 9f);
             dialog.BackColor = Color.White;
             dialog.TopMost = true;
-            string notes = "再见了k歌之王\r\n\r\n"
-                + "更新改动：\r\n"
+            string heading = "再见了k歌之王";
+            string body = "更新改动：\r\n"
                 + "· 移除 cocococo「k歌」唱歌形态：下拉仅形态1/2，不再加载 form4。\r\n"
                 + "· 新增四档光标方案。\r\n"
-                + "· 统一光标尺寸接口；修复像素光标大小无法调整的问题。\r\n"
-                + "· 预览/对照表/文档中英同步。";
+                + "· 统一光标尺寸接口；修复像素光标大小无法调整的问题。";
+            Font headFont = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold);
             Size measured;
             int lineH;
+            int headH;
+            int headW;
             string[] lines;
             using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
             {
                 lineH = (int)Math.Ceiling(dialog.Font.GetHeight(g));
-                float maxBodyW = 430f;
+                headH = (int)Math.Ceiling(headFont.GetHeight(g));
+                headW = (int)Math.Ceiling(g.MeasureString(heading, headFont).Width);
+                float maxBodyW = 340f;
                 var wrapped = new List<string>();
-                foreach (string raw in notes.Split('\n'))
+                foreach (string raw in body.Split('\n'))
                 {
                     string line = raw.TrimEnd('\r');
                     if (line.Length == 0) { wrapped.Add(" "); continue; }
@@ -2290,11 +2294,15 @@ class SettingsForm : Form
             int titleH = lineH + 8;
             int buttonH = lineH + 12;
             int footerH = buttonH + 6;
-            int iconSize = 96;
-            int textX = 12 + iconSize + 10;
-            int clientW = textX + measured.Width + 18;
-            int bodyH = measured.Height + 16;
-            if (bodyH < iconSize + 16) bodyH = iconSize + 16;
+            int imgSize = 190;
+            int markSize = 20;
+            int rightW = Math.Max(markSize + 8 + headW, measured.Width);
+            int clientW = 12 + imgSize + 18 + rightW + 14;
+            int contentTop = titleH + 12;
+            int rightHeadH = Math.Max(markSize, headH);
+            int contentH = Math.Max(imgSize, rightHeadH + 8 + measured.Height);
+            int rightX = 12 + imgSize + 18;
+            int footerY = contentTop + contentH + 12;
 
             var title = new Panel();
             title.BackColor = bar;
@@ -2332,7 +2340,21 @@ class SettingsForm : Form
             icon.Image = sad ?? SystemIcons.Information.ToBitmap();
             icon.SizeMode = PictureBoxSizeMode.Zoom;
             icon.BackColor = Color.White;
-            icon.SetBounds(12, titleH + 8, iconSize, iconSize);
+            icon.SetBounds(12, contentTop + (contentH - imgSize) / 2, imgSize, imgSize);
+
+            var mark = new PictureBox();
+            mark.Image = SystemIcons.Information.ToBitmap();
+            mark.SizeMode = PictureBoxSizeMode.Zoom;
+            mark.BackColor = Color.White;
+            mark.SetBounds(rightX, contentTop + (rightHeadH - markSize) / 2, markSize, markSize);
+
+            var head = new Label();
+            head.Font = headFont;
+            head.Text = heading;
+            head.BackColor = Color.White;
+            head.ForeColor = Color.Black;
+            head.AutoSize = true;
+            head.SetBounds(rightX + markSize + 8, contentTop + (rightHeadH - head.PreferredHeight) / 2, headW + 2, head.PreferredHeight);
 
             var text = new Label();
             text.BackColor = Color.White;
@@ -2340,19 +2362,21 @@ class SettingsForm : Form
             text.AutoSize = false;
             text.UseCompatibleTextRendering = true;
             text.Text = string.Join("\r\n", lines);
-            text.SetBounds(textX, titleH + 6, measured.Width + 2, measured.Height);
+            text.SetBounds(rightX, contentTop + rightHeadH + 8, measured.Width + 2, measured.Height);
 
             var footer = new Panel();
             footer.BackColor = bar;
-            footer.SetBounds(0, titleH + bodyH, clientW, footerH);
+            footer.SetBounds(0, footerY, clientW, footerH);
             var button = new Button();
             button.Text = "确定";
             button.SetBounds(clientW - 8 - 72, (footerH - buttonH) / 2, 72, buttonH);
             button.DialogResult = DialogResult.OK;
             footer.Controls.Add(button);
 
-            dialog.ClientSize = new Size(clientW, titleH + bodyH + footerH);
+            dialog.ClientSize = new Size(clientW, footerY + footerH);
             dialog.Controls.Add(icon);
+            dialog.Controls.Add(mark);
+            dialog.Controls.Add(head);
             dialog.Controls.Add(text);
             dialog.Controls.Add(title);
             dialog.Controls.Add(footer);
